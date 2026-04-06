@@ -1780,11 +1780,10 @@ class ShaderPlayground {
                     const param = e.target.dataset.param;
                     const value = parseFloat(e.target.value);
                     
-                    // Handle per-shader intensity
-                    if (param === 'intensity' && this.selectedShader) {
-                        if (shaderObj) {
-                            shaderObj.intensity = value;
-                        }
+                    // Per-layer properties write directly to the stack object
+                    if (param === 'opacity' || param === 'intensity') {
+                        const stackObj = this.shaderStack.find(s => s.id === this.selectedShader);
+                        if (stackObj) stackObj[param] = value;
                     } else {
                         if (!this.shaderParams[shader]) {
                             this.shaderParams[shader] = {};
@@ -1792,10 +1791,11 @@ class ShaderPlayground {
                         this.shaderParams[shader][param] = value;
                     }
                     
-                    // Update display value using precision stored on the element
+                    // Update display value
                     const decimals = parseInt(e.target.dataset.decimals ?? '2', 10);
                     const displayValue = value.toFixed(decimals);
                     document.getElementById(`shader_${param}_value`).textContent = displayValue;
+                    if (this.image) this.renderOnce();
                 });
             });
             
@@ -1810,6 +1810,7 @@ class ShaderPlayground {
                         this.shaderParams[shader] = {};
                     }
                     this.shaderParams[shader][param] = value;
+                    if (this.image) this.renderOnce();
                 });
             });
  
@@ -1825,6 +1826,7 @@ class ShaderPlayground {
                         this.shaderParams[shader] = {};
                     }
                     this.shaderParams[shader][param] = [rgb.r, rgb.g, rgb.b];
+                    if (this.image) this.renderOnce();
                 });
             });
             
@@ -1844,6 +1846,7 @@ class ShaderPlayground {
                         this.shaderParams[shader] = {};
                     }
                     this.shaderParams[shader][param] = value;
+                    if (this.image) this.renderOnce();
                 });
             });
 
@@ -1862,6 +1865,7 @@ class ShaderPlayground {
                         if (param === 'blendMode') {
                             const blendModes = ['normal', 'multiply', 'screen', 'overlay', 'softLight', 'hardLight', 'colorDodge', 'colorBurn'];
                             s.blendMode = blendModes[idx];
+                            if (this.image) this.renderOnce();
                             return;
                         }
 
@@ -1869,6 +1873,7 @@ class ShaderPlayground {
                             this.shaderParams[shaderName] = {};
                         }
                         this.shaderParams[shaderName][param] = idx;
+                        if (this.image) this.renderOnce();
                     }
                 });
             });
