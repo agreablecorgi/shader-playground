@@ -13,6 +13,7 @@ class ShaderPlayground {
         this.speed = 1.0;          // kept for time uniform scaling
         this.globalGamma = 2.2;
         this.outputResolution = 'fit';
+        this.previewFidelity = 'performance'; // 'performance' | 'balanced' | 'high'
         this.currentTheme = 'auto';
         this.image = null;
         this.texture = null;
@@ -650,6 +651,18 @@ class ShaderPlayground {
         if (outputRes) {
             outputRes.addEventListener('change', (e) => {
                 this.outputResolution = e.target.value;
+            });
+        }
+
+        // ── Preview fidelity ───────────────────────────────────────────────────
+        const fidelityEl = document.getElementById('previewFidelity');
+        if (fidelityEl) {
+            fidelityEl.addEventListener('change', (e) => {
+                this.previewFidelity = e.target.value;
+                if (this.image) {
+                    this.resize();
+                    this.renderOnce();
+                }
             });
         }
 
@@ -2119,25 +2132,47 @@ class ShaderPlayground {
     }
 
     resize() {
-        const maxWidth = this.canvas.parentElement.clientWidth - 64;
-        const maxHeight = window.innerHeight * 0.8;
+        if (!this.image) return;
 
-        const scale = Math.min(
-            maxWidth / this.image.width,
-            maxHeight / this.image.height,
-            1
-        );
+        const imgW = this.image.width;
+        const imgH = this.image.height;
 
-        this.canvas.width = this.image.width * scale;
-        this.canvas.height = this.image.height * scale;
+        // Determine internal rendering scale based on fidelity setting
+        let scale;
+        switch (this.previewFidelity) {
+            case 'high':
+                // Full source resolution — preview exactly matches the export
+                scale = 1.0;
+                break;
+            case 'balanced':
+                // Cap at 1920px wide; never upscale
+                scale = Math.min(1920 / imgW, 1.0);
+                break;
+            case 'performance':
+            default: {
+                // Fit within the visible viewport; never upscale
+                const maxWidth  = this.canvas.parentElement.clientWidth - 64;
+                const maxHeight = window.innerHeight * 0.8;
+                scale = Math.min(maxWidth / imgW, maxHeight / imgH, 1.0);
+                break;
+            }
+        }
+
+        this.canvas.width  = Math.round(imgW * scale);
+        this.canvas.height = Math.round(imgH * scale);
 
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
-        // Update dimensions display
+        // Show source dims; also show internal render size when it differs
         const dimsEl = document.getElementById('canvasDims');
-        if (dimsEl) dimsEl.textContent = `${this.image.width} × ${this.image.height}`;
+        if (dimsEl) {
+            const renderW = this.canvas.width;
+            const renderH = this.canvas.height;
+            const suffix  = (renderW === imgW && renderH === imgH) ? '' : ' (Preview ' + renderW + 'x' + renderH + ')';
+            dimsEl.textContent = imgW + ' × ' + imgH + suffix;
+        }
 
-        // Recreate framebuffers with new size
+        // Recreate framebuffers at new internal resolution
         this.setupFramebuffers();
     }
 

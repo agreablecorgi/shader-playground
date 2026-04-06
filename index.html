@@ -20,7 +20,16 @@
         </div>
 
         <div class="titlebar-controls">
-            <label class="ctrl-label" for="outputResolution">Resolution</label>
+            <label class="ctrl-label" for="previewFidelity">Preview</label>
+            <select id="previewFidelity" class="f-select sm" title="Controls the internal rendering resolution of the canvas preview. 'High' matches the exported image exactly.">
+                <option value="performance">Performance</option>
+                <option value="balanced">Balanced</option>
+                <option value="high">High Fidelity</option>
+            </select>
+
+            <div class="titlebar-sep"></div>
+
+            <label class="ctrl-label" for="outputResolution">Export</label>
             <select id="outputResolution" class="f-select sm">
                 <option value="fit">Fit to image</option>
                 <option value="720p">720p (1280×720)</option>
