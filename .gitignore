@@ -1,0 +1,41 @@
+# Depth Pro checkpoints (large model files)
+checkpoints/
+*.pt
+*.pth
+
+# Generated depth maps
+*_depth.png
+*_depth.jpg
+
+# SHARP generated files
+*_gaussians.json
+*_sharp_depth.png
+*_normals.png
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+
+# Examples (user-specific)
+examples/*.jpg
+examples/*.jpeg
+examples/*.png
+!examples/README.md
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

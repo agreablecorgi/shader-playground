@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shader Playground</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+    <!-- ── TITLEBAR ─────────────────────────────────────────────── -->
+    <header class="titlebar">
+        <div class="titlebar-brand">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span>Shader Playground</span>
+        </div>
+
+        <div class="titlebar-controls">
+            <label class="ctrl-label" for="outputResolution">Resolution</label>
+            <select id="outputResolution" class="f-select sm">
+                <option value="fit">Fit to image</option>
+                <option value="720p">720p (1280×720)</option>
+                <option value="1080p">1080p (1920×1080)</option>
+                <option value="2k">2K (2560×1440)</option>
+                <option value="4k">4K (3840×2160)</option>
+            </select>
+
+            <label class="ctrl-label" for="globalGamma">Gamma</label>
+            <input type="number" id="globalGamma" class="f-number sm"
+                   min="0.5" max="4.0" step="0.05" value="2.20" aria-label="Global gamma">
+
+            <div class="titlebar-sep"></div>
+
+            <button id="themeToggleBtn" class="f-btn ghost icon" title="Toggle theme" aria-label="Toggle theme">
+                <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                    <line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+
+            <div class="titlebar-sep"></div>
+
+            <button id="saveStackBtn" class="f-btn ghost sm" title="Export shader stack as JSON">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Save Stack
+            </button>
+
+            <label class="f-btn ghost sm" title="Import shader stack from JSON" style="cursor:pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Load Stack
+                <input type="file" id="loadStackFile" accept=".json" hidden>
+            </label>
+
+            <div class="titlebar-sep"></div>
+
+            <button id="downloadBtn" class="f-btn accent sm" title="Export as PNG">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                PNG
+            </button>
+
+            <button id="downloadJpgBtn" class="f-btn secondary sm" title="Export as JPG">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                JPG
+            </button>
+        </div>
+    </header>
+
+    <!-- ── WORKSPACE (3 columns) ─────────────────────────────────── -->
+    <div class="workspace">
+
+        <!-- ── LEFT: Layers panel ───────────────────────────────── -->
+        <aside class="panel" aria-label="Layers">
+
+            <!-- Upload zone -->
+            <div class="upload-zone">
+                <label for="imageUpload" class="f-btn secondary" style="width:100%; justify-content: center; cursor:pointer;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                    Upload Image
+                </label>
+                <input type="file" id="imageUpload" accept="image/*" hidden>
+
+                <div style="display:flex; gap:4px; width:100%;">
+                    <label for="depthUpload" class="f-btn ghost sm" style="flex:1; cursor:pointer; justify-content:center;" title="Upload depth map">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <rect x="3" y="3" width="18" height="18"/>
+                            <line x1="3" y1="9" x2="21" y2="9"/>
+                            <line x1="3" y1="15" x2="21" y2="15"/>
+                        </svg>
+                        Depth
+                    </label>
+                    <input type="file" id="depthUpload" accept="image/*" hidden>
+
+                    <label for="normalUpload" class="f-btn ghost sm" style="flex:1; cursor:pointer; justify-content:center;" title="Upload normal map">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M12 2L2 12l10 10 10-10L12 2z"/>
+                        </svg>
+                        Normal
+                    </label>
+                    <input type="file" id="normalUpload" accept="image/*" hidden>
+
+                    <label for="gaussianUpload" class="f-btn ghost sm" style="flex:1; cursor:pointer; justify-content:center;" title="Upload Gaussians JSON">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <circle cx="12" cy="12" r="2"/>
+                            <circle cx="12" cy="5" r="1"/>
+                            <circle cx="19" cy="12" r="1"/>
+                            <circle cx="12" cy="19" r="1"/>
+                            <circle cx="5" cy="12" r="1"/>
+                        </svg>
+                        Splat
+                    </label>
+                    <input type="file" id="gaussianUpload" accept=".json" hidden>
+                </div>
+            </div>
+
+            <!-- Stack header -->
+            <div class="panel-head">
+                <span class="panel-title">Layers</span>
+                <button id="clearStackBtn" class="f-btn ghost icon sm" title="Clear all layers" aria-label="Clear all layers">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div id="shaderStack" class="shader-stack"></div>
+
+            <!-- Reset -->
+            <div class="panel-head" style="border-top: 1px solid var(--stroke-1); border-bottom: none; margin-top: auto;">
+                <button id="resetBtn" class="f-btn ghost sm" style="width:100%;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M1 4v6h6M23 20v-6h-6"/>
+                        <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                    </svg>
+                    Reset All
+                </button>
+            </div>
+        </aside>
+
+        <!-- ── CENTER: Canvas ────────────────────────────────────── -->
+        <main class="canvas-area" aria-label="Canvas">
+            <div class="canvas-toolbar">
+                <button id="fitBtn" class="f-btn ghost icon sm" title="Fit to screen" aria-label="Fit to screen">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                    </svg>
+                </button>
+                <span id="canvasDims" style="font-size:var(--fs-xs); color:var(--fg-4); margin-left:4px;"></span>
+            </div>
+
+            <div class="canvas-viewport" id="canvasWrapper">
+                <canvas id="glCanvas"></canvas>
+                <div class="canvas-placeholder" id="placeholder">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                    <p>Upload an image to get started</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- ── RIGHT: Controls panel ─────────────────────────────── -->
+        <aside class="panel controls-panel" aria-label="Controls">
+
+            <!-- Per-layer shader controls -->
+            <div id="shaderControls" class="controls-scroll" style="display:none;">
+                <div class="panel-head" style="padding: 8px 0 6px; border-bottom: 1px solid var(--stroke-1); margin-bottom: 8px;">
+                    <span id="shaderControlsTitle" class="panel-title">Shader Settings</span>
+                </div>
+                <div id="shaderControlsContainer"></div>
+            </div>
+
+            <!-- Gradient editor (shown for gradient_map) -->
+            <div id="gradientEditor" class="gradient-editor-section" style="display:none;">
+                <div class="panel-sub-head">Gradient Editor</div>
+
+                <div class="gradient-preview-wrap">
+                    <div id="gradientPreview" class="gradient-preview"></div>
+                    <div id="gradientStops" class="gradient-stops"></div>
+                </div>
+
+                <div class="ctrl-row">
+                    <label class="ctrl-label" for="gradientPreset">Preset</label>
+                    <select id="gradientPreset" class="f-select sm" style="flex:1;">
+                        <option value="custom">Custom</option>
+                        <option value="sunset">Sunset</option>
+                        <option value="ocean">Ocean</option>
+                        <option value="forest">Forest</option>
+                        <option value="fire">Fire</option>
+                        <option value="purple_haze">Purple Haze</option>
+                        <option value="golden_hour">Golden Hour</option>
+                        <option value="cool_blues">Cool Blues</option>
+                        <option value="warm_vintage">Warm Vintage</option>
+                        <option value="cyberpunk">Cyberpunk</option>
+                        <option value="autumn">Autumn</option>
+                    </select>
+                </div>
+
+                <div class="gradient-actions">
+                    <button id="addGradientStop" class="f-btn ghost sm xs">+ Stop</button>
+                    <button id="removeGradientStop" class="f-btn ghost sm xs">− Stop</button>
+                    <button id="flipGradient" class="f-btn ghost sm xs">⇄ Flip</button>
+                </div>
+
+                <div id="stopEditor" class="stop-editor" style="display:none;">
+                    <div class="stop-controls">
+                        <label class="ctrl-label" for="stopPosition">Position</label>
+                        <input type="range" id="stopPosition" min="0" max="100" value="50" style="flex:1;">
+                        <span id="stopPositionValue">50%</span>
+                    </div>
+                    <div class="stop-controls">
+                        <label class="ctrl-label" for="stopColor">Color</label>
+                        <input type="color" id="stopColor" value="#ffffff">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Empty state -->
+            <div class="controls-empty" id="controlsEmpty">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" style="margin: 0 auto 8px; display:block;">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+                </svg>
+                Select a layer to<br>see its settings
+            </div>
+        </aside>
+    </div>
+
+    <!-- ── BOTTOM: Effect picker ──────────────────────────────────── -->
+    <nav class="picker" aria-label="Effect picker">
+
+        <div class="picker-nav" role="tablist">
+            <button class="ptab active" role="tab" aria-selected="true"  data-tab="filters">Filters</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="color">Color</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="signal">Signal</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="vector">Vector</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="distortion">Distort</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="artistic">Artistic</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="film">Film</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="depth">Depth</button>
+            <button class="ptab"        role="tab" aria-selected="false" data-tab="3d">3D</button>
+        </div>
+
+        <div class="picker-content">
+
+            <div class="ppanel active" id="ptab-filters">
+                <button class="effect-btn" data-shader="original">Original</button>
+                <button class="effect-btn" data-shader="halftone">Halftone</button>
+                <button class="effect-btn" data-shader="halftone_cmyk">CMYK Print</button>
+                <button class="effect-btn" data-shader="dithering">Dithering</button>
+                <button class="effect-btn" data-shader="pixelate">Pixelate</button>
+                <button class="effect-btn" data-shader="water">Water Ripple</button>
+                <button class="effect-btn" data-shader="glitch">Glitch</button>
+            </div>
+
+            <div class="ppanel" id="ptab-color">
+                <button class="effect-btn" data-shader="grayscale">Grayscale</button>
+                <button class="effect-btn" data-shader="sepia">Sepia</button>
+                <button class="effect-btn" data-shader="invert">Invert</button>
+                <button class="effect-btn" data-shader="vintage">Vintage</button>
+                <button class="effect-btn" data-shader="chromatic">Chromatic</button>
+                <button class="effect-btn" data-shader="duotone">Duotone</button>
+                <button class="effect-btn" data-shader="gradient_map">Gradient Map</button>
+                <button class="effect-btn" data-shader="tritone">Tritone</button>
+                <button class="effect-btn" data-shader="technicolor">Technicolor</button>
+                <button class="effect-btn" data-shader="oklch_grade">OKLCH Grade</button>
+                <button class="effect-btn" data-shader="split_toning">Split Toning</button>
+                <button class="effect-btn" data-shader="hue_mask">Hue Mask</button>
+            </div>
+
+            <div class="ppanel" id="ptab-signal">
+                <button class="effect-btn" data-shader="signal_emulation">Signal</button>
+                <button class="effect-btn" data-shader="crt_advanced">CRT</button>
+                <button class="effect-btn" data-shader="vhs">VHS Tape</button>
+            </div>
+
+            <div class="ppanel" id="ptab-vector">
+                <button class="effect-btn" data-shader="color_vector_normalize">Normalize</button>
+                <button class="effect-btn" data-shader="color_vector_flow">Flow</button>
+                <button class="effect-btn" data-shader="color_vector_curl">Curl</button>
+                <button class="effect-btn" data-shader="color_vector_divergence">Divergence</button>
+                <button class="effect-btn" data-shader="color_vector_splatting">Splatting</button>
+            </div>
+
+            <div class="ppanel" id="ptab-distortion">
+                <button class="effect-btn" data-shader="swirl">Swirl</button>
+                <button class="effect-btn" data-shader="fisheye">Fisheye</button>
+                <button class="effect-btn" data-shader="wave">Wave</button>
+                <button class="effect-btn" data-shader="kaleidoscope">Kaleidoscope</button>
+                <button class="effect-btn" data-shader="lens_distortion">Lens Distort</button>
+            </div>
+
+            <div class="ppanel" id="ptab-artistic">
+                <button class="effect-btn" data-shader="oil">Oil Paint</button>
+                <button class="effect-btn" data-shader="emboss">Emboss</button>
+                <button class="effect-btn" data-shader="edge">Edge Detect</button>
+                <button class="effect-btn" data-shader="blur">Blur</button>
+                <button class="effect-btn" data-shader="kuwahara">Kuwahara</button>
+                <button class="effect-btn" data-shader="voronoi_stippling">Stippling</button>
+                <button class="effect-btn" data-shader="crosshatch">Crosshatch</button>
+                <button class="effect-btn" data-shader="ssao">SSAO</button>
+                <button class="effect-btn" data-shader="bloom">Bloom / Glow</button>
+                <button class="effect-btn" data-shader="kuwahara_anisotropic">Anisotropic Paint</button>
+                <button class="effect-btn" data-shader="pixel_sort">Pixel Sort</button>
+                <button class="effect-btn" data-shader="thin_film">Thin Film</button>
+            </div>
+
+            <div class="ppanel" id="ptab-film">
+                <button class="effect-btn" data-shader="film_grain">Film Grain</button>
+                <button class="effect-btn" data-shader="bleach_bypass">Bleach Bypass</button>
+                <button class="effect-btn" data-shader="anamorphic_flare">Anamorphic Flare</button>
+                <button class="effect-btn" data-shader="risograph">Risograph</button>
+                <button class="effect-btn" data-shader="mezzotint">Mezzotint</button>
+                <button class="effect-btn" data-shader="filter_red25">Red #25</button>
+                <button class="effect-btn" data-shader="filter_orange21">Orange #21</button>
+                <button class="effect-btn" data-shader="filter_yellow8">Yellow #8</button>
+                <button class="effect-btn" data-shader="filter_green11">Green #11</button>
+                <button class="effect-btn" data-shader="filter_blue47">Blue #47</button>
+                <button class="effect-btn" data-shader="filter_warming81a">Warming 81A</button>
+                <button class="effect-btn" data-shader="filter_cooling82a">Cooling 82A</button>
+                <button class="effect-btn" data-shader="filter_polarizer">Polarizer</button>
+                <button class="effect-btn" data-shader="filter_nd">Neutral Density</button>
+                <button class="effect-btn" data-shader="filter_uv_haze">UV/Haze</button>
+                <button class="effect-btn" data-shader="filter_infrared">Infrared</button>
+                <button class="effect-btn" data-shader="filter_didymium">Didymium</button>
+            </div>
+
+            <div class="ppanel" id="ptab-depth">
+                <button class="effect-btn" data-shader="depth_of_field">Depth of Field</button>
+                <button class="effect-btn" data-shader="tilt_shift">Tilt-Shift</button>
+                <button class="effect-btn" data-shader="atmospheric_fog">Atmospheric Fog</button>
+                <button class="effect-btn" data-shader="depth_anaglyph">3D Anaglyph</button>
+                <button class="effect-btn" data-shader="depth_peeling">Depth Peeling</button>
+                <button class="effect-btn" data-shader="depth_color_grade">Depth Color Grade</button>
+                <button class="effect-btn" data-shader="depth_edge_glow">Edge Glow</button>
+                <button class="effect-btn" data-shader="depth_selective_sharpen">Selective Sharpen</button>
+                <button class="effect-btn" data-shader="depth_displacement">Displacement</button>
+                <button class="effect-btn" data-shader="depth_relief">Relief Lighting</button>
+                <button class="effect-btn" data-shader="depth_halftone">Depth Halftone</button>
+                <button class="effect-btn" data-shader="depth_shadow">Depth Shadow</button>
+            </div>
+
+            <div class="ppanel" id="ptab-3d">
+                <button class="effect-btn gaussian-viewer-btn" data-mode="gaussian">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"/>
+                        <circle cx="12" cy="12" r="6"/>
+                        <circle cx="12" cy="12" r="2"/>
+                    </svg>
+                    Gaussian Viewer
+                </button>
+                <button class="effect-btn" data-shader="sharp_3d_view">3D View</button>
+                <button class="effect-btn" data-shader="normal_map_view">Normal Map Lighting</button>
+                <button class="effect-btn" data-shader="geometric_depth_enhance">Geometric Enhance</button>
+            </div>
+
+        </div><!-- /picker-content -->
+    </nav>
+
+</div><!-- /app -->
+
+<script src="shaders.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
