@@ -725,6 +725,62 @@ body {
 .f-btn.sm.icon { width: 26px; height: 26px; padding: 3px; }
 .f-btn.xs { font-size: var(--fs-xs); height: 22px; padding: 2px 6px; }
 
+.asset-generate-btn {
+  width: 100%;
+  margin-top: 2px;
+  justify-content: center;
+}
+
+.asset-status {
+  min-height: 16px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  text-align: center;
+}
+
+.asset-status[data-state="ready"] { color: var(--success); }
+.asset-status[data-state="working"] { color: var(--accent-bg); }
+.asset-status[data-state="error"] { color: var(--danger); }
+
+.ply-preview-controls {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-2) 74%, transparent);
+}
+
+.ply-preview-controls[hidden] {
+  display: none;
+}
+
+.ply-preview-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.ply-preview-row .f-btn[data-active="true"] {
+  color: var(--accent-bg);
+  border-color: var(--accent-bg);
+  background: color-mix(in srgb, var(--accent-bg) 18%, transparent);
+}
+
+.ply-slider {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.ply-slider input {
+  width: 100%;
+}
+
 /* ── FORM CONTROLS ────────────────────────────────────────────── */
 .f-select {
   font-family: var(--font);

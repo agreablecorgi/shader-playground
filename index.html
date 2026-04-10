@@ -141,7 +141,7 @@
                     </label>
                     <input type="file" id="normalUpload" accept="image/*" hidden>
 
-                    <label for="gaussianUpload" class="f-btn ghost sm" style="flex:1; cursor:pointer; justify-content:center;" title="Upload Gaussians JSON">
+                    <label for="gaussianUpload" class="f-btn ghost sm" style="flex:1; cursor:pointer; justify-content:center;" title="Upload SHARP / 3DGS PLY">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <circle cx="12" cy="12" r="2"/>
                             <circle cx="12" cy="5" r="1"/>
@@ -149,9 +149,57 @@
                             <circle cx="12" cy="19" r="1"/>
                             <circle cx="5" cy="12" r="1"/>
                         </svg>
-                        Splat
+                        PLY
                     </label>
-                    <input type="file" id="gaussianUpload" accept=".json" hidden>
+                    <input type="file" id="gaussianUpload" accept=".ply,application/octet-stream" hidden>
+                </div>
+
+                <button id="depthProGenerateBtn" class="f-btn ghost sm asset-generate-btn" type="button" title="Generate a Depth Pro map using the local companion service">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M12 3v18"/>
+                        <path d="M5 8h14"/>
+                        <path d="M7 16h10"/>
+                    </svg>
+                    Generate Depth Pro
+                </button>
+                <div id="depthProStatus" class="asset-status" data-state="idle">
+                    Start companion for automatic depth.
+                </div>
+                <button id="sharpGenerateBtn" class="f-btn ghost sm asset-generate-btn" type="button" title="Generate official SHARP 3DGS assets using the local companion service">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="12" cy="12" r="2"/>
+                        <circle cx="6" cy="7" r="1"/>
+                        <circle cx="18" cy="7" r="1"/>
+                        <circle cx="7" cy="18" r="1"/>
+                        <circle cx="17" cy="18" r="1"/>
+                    </svg>
+                    Generate SHARP
+                </button>
+                <div id="sharpStatus" class="asset-status" data-state="idle">
+                    SHARP assets not generated.
+                </div>
+                <div id="plyPreviewControls" class="ply-preview-controls" hidden>
+                    <div class="ply-preview-row">
+                        <button id="plyFrontBtn" class="f-btn ghost xs" type="button">Front</button>
+                        <button id="plyOrbitBtn" class="f-btn ghost xs" type="button">Orbit</button>
+                        <button id="plyResetBtn" class="f-btn ghost xs" type="button">Reset</button>
+                    </div>
+                    <label class="ply-slider">
+                        <span>Size</span>
+                        <input id="plyPointScale" type="range" min="0.35" max="4" step="0.05" value="1.25">
+                    </label>
+                    <label class="ply-slider">
+                        <span>Opacity</span>
+                        <input id="plyOpacity" type="range" min="0.05" max="1" step="0.01" value="1">
+                    </label>
+                    <label class="ply-slider">
+                        <span>Density</span>
+                        <input id="plyDensity" type="range" min="20000" max="250000" step="10000" value="120000">
+                    </label>
+                    <label class="ply-slider">
+                        <span>Depth</span>
+                        <input id="plyDepthScale" type="range" min="0" max="2" step="0.05" value="0.65">
+                    </label>
                 </div>
             </div>
 
@@ -324,7 +372,7 @@
                 <button class="effect-btn" data-shader="color_vector_flow">Flow</button>
                 <button class="effect-btn" data-shader="color_vector_curl">Curl</button>
                 <button class="effect-btn" data-shader="color_vector_divergence">Divergence</button>
-                <button class="effect-btn" data-shader="color_vector_splatting">Splatting</button>
+                <button class="effect-btn" data-shader="color_vector_splatting">Flow Splat</button>
             </div>
 
             <div class="ppanel" id="ptab-distortion">
@@ -343,6 +391,7 @@
                 <button class="effect-btn" data-shader="kuwahara">Kuwahara</button>
                 <button class="effect-btn" data-shader="voronoi_stippling">Stippling</button>
                 <button class="effect-btn" data-shader="crosshatch">Crosshatch</button>
+                <button class="effect-btn" data-shader="paper_texture">Paper Texture</button>
                 <button class="effect-btn" data-shader="ssao">SSAO</button>
                 <button class="effect-btn" data-shader="bloom">Bloom / Glow</button>
                 <button class="effect-btn" data-shader="kuwahara_anisotropic">Anisotropic Paint</button>
@@ -392,7 +441,7 @@
                         <circle cx="12" cy="12" r="6"/>
                         <circle cx="12" cy="12" r="2"/>
                     </svg>
-                    Gaussian Viewer
+                    PLY Preview
                 </button>
                 <button class="effect-btn" data-shader="sharp_3d_view">3D View</button>
                 <button class="effect-btn" data-shader="normal_map_view">Normal Map Lighting</button>

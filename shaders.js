@@ -1866,38 +1866,83 @@ const fragmentShaders = {
         uniform vec2 u_resolution;
         uniform float u_splatDistance;
         uniform float u_splatSize;
+        uniform float u_directionStrength;
+        uniform float u_scatter;
+        uniform float u_edgePreserve;
+        uniform float u_colorBleed;
         varying vec2 v_texCoord;
+
+        float luminance(vec3 color) {
+            return dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        float hash12(vec2 p) {
+            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+        }
+
+        vec2 flowDirection(vec2 uv, vec3 color) {
+            vec2 texel = 1.0 / u_resolution;
+            float lL = luminance(texture2D(u_image, uv - vec2(texel.x, 0.0)).rgb);
+            float lR = luminance(texture2D(u_image, uv + vec2(texel.x, 0.0)).rgb);
+            float lD = luminance(texture2D(u_image, uv - vec2(0.0, texel.y)).rgb);
+            float lU = luminance(texture2D(u_image, uv + vec2(0.0, texel.y)).rgb);
+            vec2 gradient = vec2(lR - lL, lU - lD);
+            vec2 tangent = vec2(-gradient.y, gradient.x);
+
+            vec2 chromaVector = color.rg - vec2(color.b, luminance(color));
+            vec2 direction = mix(chromaVector, tangent, 0.72);
+            float lenDir = length(direction);
+            if (lenDir < 0.0001) {
+                direction = vec2(1.0, 0.0);
+            } else {
+                direction /= lenDir;
+            }
+            return direction;
+        }
 
         void main() {
             vec3 color = texture2D(u_image, v_texCoord).rgb;
-            
-            // Treat RGB as a direction vector for splatting
-            vec2 splatDir = normalize(color.rg - 0.5) * u_splatDistance * 0.01;
-            
-            // Accumulate colors from splat sources
+
             vec3 accumulated = vec3(0.0);
             float totalWeight = 0.0;
-            
-            for(float y = -2.0; y <= 2.0; y++) {
-                for(float x = -2.0; x <= 2.0; x++) {
-                    vec2 offset = vec2(x, y) * u_splatSize / u_resolution;
+
+            float radius = max(u_splatSize, 1.0);
+            float sigma = max(radius * 0.48, 0.75);
+            float centerLuma = luminance(color);
+
+            for(float y = -3.0; y <= 3.0; y += 1.0) {
+                for(float x = -3.0; x <= 3.0; x += 1.0) {
+                    vec2 sampleStep = vec2(x, y);
+                    vec2 offset = sampleStep * radius / u_resolution;
                     vec2 sourceUV = v_texCoord - offset;
+                    if (sourceUV.x < 0.0 || sourceUV.x > 1.0 || sourceUV.y < 0.0 || sourceUV.y > 1.0) {
+                        continue;
+                    }
+
                     vec3 sourceColor = texture2D(u_image, sourceUV).rgb;
-                    
-                    // Each source splatters in its color direction
-                    vec2 sourceSplatDir = normalize(sourceColor.rg - 0.5) * u_splatDistance * 0.01;
-                    
-                    // Check if this source would splat onto current pixel
-                    float dist = length(sourceUV + sourceSplatDir - v_texCoord);
-                    float weight = exp(-dist * 100.0 / u_splatSize);
-                    
+                    vec2 direction = flowDirection(sourceUV, sourceColor);
+
+                    float randomAngle = hash12(sourceUV * u_resolution) * 6.2831853;
+                    vec2 jitter = vec2(cos(randomAngle), sin(randomAngle)) * u_scatter * radius * 0.65 / u_resolution;
+                    vec2 travel = direction * u_splatDistance * u_directionStrength / u_resolution + jitter;
+                    vec2 landingUV = sourceUV + travel;
+                    vec2 deltaPixels = (landingUV - v_texCoord) * u_resolution;
+
+                    float kernel = exp(-dot(deltaPixels, deltaPixels) / (2.0 * sigma * sigma));
+                    float edgeGate = 1.0 - smoothstep(0.08, 0.42, abs(luminance(sourceColor) - centerLuma));
+                    float weight = kernel * mix(1.0, edgeGate, u_edgePreserve);
+
                     accumulated += sourceColor * weight;
                     totalWeight += weight;
                 }
             }
-            
+
             vec3 result = totalWeight > 0.0 ? accumulated / totalWeight : color;
-            gl_FragColor = vec4(mix(color, result, u_intensity), 1.0);
+            result = mix(result, max(result, color), u_colorBleed * 0.35);
+            result = mix(color, result, u_intensity);
+            gl_FragColor = vec4(result, 1.0);
         }
     `,
 
@@ -4306,12 +4351,286 @@ const fragmentShaders = {
     `,
 
     // ════════════════════════════════════════════════════════════════════
+    // PAPER BASE / MEDIA MODEL
+    // Layered cellulose relief with procedural fibers, tooth, flecks,
+    // absorbency, bleed, and medium-specific deposition behavior.
+    // Presets cover multiple paper stocks and drawing media without
+    // requiring scanned texture maps.
+    // ════════════════════════════════════════════════════════════════════
+    // PAPER TEXTURE
+    // Procedural paper stock and medium interaction model.
+    paper_texture: `
+        precision highp float;
+        uniform sampler2D u_image;
+        uniform vec2  u_resolution;
+        uniform float u_intensity;
+        uniform float u_paperPreset;
+        uniform float u_mediumPreset;
+        uniform float u_grainSize;
+        uniform float u_textureWeight;
+        uniform float u_absorbency;
+        uniform float u_bleed;
+        uniform float u_tooth;
+        uniform float u_edgeDarkening;
+        uniform float u_pigmentGranulation;
+        uniform float u_realisticColor;
+
+        varying vec2 v_texCoord;
+
+        float hash21(vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+
+        float noise2(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+
+            float a = hash21(i);
+            float b = hash21(i + vec2(1.0, 0.0));
+            float c = hash21(i + vec2(0.0, 1.0));
+            float d = hash21(i + vec2(1.0, 1.0));
+
+            return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        }
+
+        float fbm(vec2 p) {
+            float value = 0.0;
+            float amplitude = 0.5;
+            for (int i = 0; i < 4; i++) {
+                value += amplitude * noise2(p);
+                p = p * 2.02 + vec2(19.1, 7.3);
+                amplitude *= 0.5;
+            }
+            return value;
+        }
+
+        float saturation(vec3 c) {
+            return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+        }
+
+        vec3 adjustSaturation(vec3 c, float amount) {
+            float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            return mix(vec3(l), c, amount);
+        }
+
+        vec3 sampleSoft(vec2 uv, vec2 px, float radius) {
+            vec2 off = px * radius;
+
+            vec3 sum = texture2D(u_image, uv).rgb * 0.28;
+            sum += texture2D(u_image, clamp(uv + vec2( off.x, 0.0), 0.0, 1.0)).rgb * 0.14;
+            sum += texture2D(u_image, clamp(uv + vec2(-off.x, 0.0), 0.0, 1.0)).rgb * 0.14;
+            sum += texture2D(u_image, clamp(uv + vec2(0.0,  off.y), 0.0, 1.0)).rgb * 0.14;
+            sum += texture2D(u_image, clamp(uv + vec2(0.0, -off.y), 0.0, 1.0)).rgb * 0.14;
+            sum += texture2D(u_image, clamp(uv + vec2( off.x,  off.y), 0.0, 1.0)).rgb * 0.04;
+            sum += texture2D(u_image, clamp(uv + vec2(-off.x,  off.y), 0.0, 1.0)).rgb * 0.04;
+            sum += texture2D(u_image, clamp(uv + vec2( off.x, -off.y), 0.0, 1.0)).rgb * 0.04;
+            sum += texture2D(u_image, clamp(uv + vec2(-off.x, -off.y), 0.0, 1.0)).rgb * 0.04;
+
+            return sum;
+        }
+
+        void main() {
+            vec2 uv = v_texCoord;
+            vec2 px = 1.0 / u_resolution;
+            vec3 source = texture2D(u_image, uv).rgb;
+            float lum = dot(source, vec3(0.2126, 0.7152, 0.0722));
+            float sat = saturation(source);
+
+            vec3 paperTint = vec3(0.985, 0.983, 0.978);
+            float presetRoughness = 0.12;
+            float presetFiber = 0.08;
+            float presetDirectionality = 0.10;
+            float presetScale = 1.25;
+            float presetSpeckle = 0.02;
+            float extraCrossFiber = 0.0;
+            vec2 fiberDir = normalize(vec2(0.92, 0.38));
+
+            if (u_paperPreset < 0.5) {
+                paperTint = vec3(0.985, 0.983, 0.978);
+                presetRoughness = 0.12;
+                presetFiber = 0.08;
+                presetDirectionality = 0.10;
+                presetScale = 1.25;
+                presetSpeckle = 0.02;
+                extraCrossFiber = 0.04;
+                fiberDir = normalize(vec2(0.92, 0.38));
+            } else if (u_paperPreset < 1.5) {
+                paperTint = vec3(0.982, 0.976, 0.962);
+                presetRoughness = 0.26;
+                presetFiber = 0.22;
+                presetDirectionality = 0.22;
+                presetScale = 1.0;
+                presetSpeckle = 0.05;
+                extraCrossFiber = 0.10;
+                fiberDir = normalize(vec2(0.84, 0.54));
+            } else if (u_paperPreset < 2.5) {
+                paperTint = vec3(0.978, 0.971, 0.952);
+                presetRoughness = 0.46;
+                presetFiber = 0.20;
+                presetDirectionality = 0.28;
+                presetScale = 0.82;
+                presetSpeckle = 0.07;
+                extraCrossFiber = 0.12;
+                fiberDir = normalize(vec2(0.74, 0.67));
+            } else if (u_paperPreset < 3.5) {
+                paperTint = vec3(0.915, 0.848, 0.698);
+                presetRoughness = 0.62;
+                presetFiber = 0.46;
+                presetDirectionality = 0.92;
+                presetScale = 0.74;
+                presetSpeckle = 0.08;
+                extraCrossFiber = 0.36;
+                fiberDir = normalize(vec2(0.98, 0.19));
+            } else {
+                paperTint = vec3(0.914, 0.902, 0.858);
+                presetRoughness = 0.34;
+                presetFiber = 0.18;
+                presetDirectionality = 0.58;
+                presetScale = 1.15;
+                presetSpeckle = 0.14;
+                extraCrossFiber = 0.08;
+                fiberDir = normalize(vec2(0.95, 0.31));
+            }
+
+            float grainScale = max(u_grainSize * 6.0 * presetScale, 1.0);
+            vec2 paperCoord = uv * u_resolution / grainScale;
+
+            float macro = fbm(paperCoord * (0.75 + presetRoughness));
+            float micro = fbm(paperCoord * (2.3 + presetRoughness * 1.7) + 17.4);
+            float along = dot(paperCoord, fiberDir);
+            float across = dot(paperCoord, vec2(-fiberDir.y, fiberDir.x));
+            float fiberNoise = fbm(vec2(along * 1.5, across * 0.45) + 23.0);
+            float strand = abs(sin(along * (2.2 + presetDirectionality * 7.0) + fiberNoise * 3.14159));
+            float fibers = smoothstep(0.56, 0.96, strand) *
+                           (0.45 + 0.55 * noise2(vec2(across * 1.2, along * 0.2)));
+            float crossFiber = smoothstep(0.62, 0.98,
+                               abs(sin(across * (1.1 + extraCrossFiber * 5.5) + macro * 4.0)));
+            float flecks = smoothstep(0.78, 0.98, noise2(paperCoord * 4.0 + 9.4));
+
+            float paperHeight = macro * (0.55 + presetRoughness * 0.25)
+                              + micro * (0.25 + presetRoughness * 0.15)
+                              + fibers * presetFiber * 0.45
+                              + crossFiber * extraCrossFiber * 0.18;
+            paperHeight = clamp(paperHeight, 0.0, 1.0);
+            paperHeight = mix(paperHeight, smoothstep(0.18, 0.92, paperHeight), 0.35 + u_tooth * 0.25);
+
+            float ridges = smoothstep(0.48, 0.95, paperHeight);
+            float valleys = 1.0 - paperHeight;
+            float paperShade = (paperHeight - 0.5) * (0.14 + presetRoughness * 0.12) * u_textureWeight;
+            vec3 paperBase = clamp(paperTint + vec3(paperShade) - flecks * presetSpeckle * 0.06, 0.0, 1.0);
+
+            float mediumBleed = 0.18;
+            float mediumTooth = 0.18;
+            float mediumGranulation = 0.08;
+            float mediumEdge = 0.65;
+            float chalkiness = 0.0;
+            float density = 0.92;
+            float satKeep = 1.0;
+            float tintBlend = 0.04;
+            float strokeAmount = 0.0;
+            float strokeFrequency = 0.0;
+
+            if (u_mediumPreset < 0.5) {
+                mediumBleed = 0.12;
+                mediumTooth = 0.16;
+                mediumGranulation = 0.05;
+                mediumEdge = 0.70;
+                chalkiness = 0.0;
+                density = 0.95;
+                satKeep = 1.0;
+                tintBlend = 0.03;
+            } else if (u_mediumPreset < 1.5) {
+                mediumBleed = 0.72;
+                mediumTooth = 0.34;
+                mediumGranulation = 0.86;
+                mediumEdge = 0.82;
+                chalkiness = 0.05;
+                density = 0.72;
+                satKeep = 0.92;
+                tintBlend = 0.10;
+            } else if (u_mediumPreset < 2.5) {
+                mediumBleed = 0.42;
+                mediumTooth = 0.08;
+                mediumGranulation = 0.10;
+                mediumEdge = 0.16;
+                chalkiness = 0.0;
+                density = 0.84;
+                satKeep = 1.08;
+                tintBlend = 0.05;
+            } else if (u_mediumPreset < 3.5) {
+                mediumBleed = 0.12;
+                mediumTooth = 0.82;
+                mediumGranulation = 0.42;
+                mediumEdge = 0.26;
+                chalkiness = 0.12;
+                density = 0.58;
+                satKeep = 0.82;
+                tintBlend = 0.12;
+                strokeAmount = 0.52;
+                strokeFrequency = 8.5;
+            } else {
+                mediumBleed = 0.28;
+                mediumTooth = 0.74;
+                mediumGranulation = 0.58;
+                mediumEdge = 0.22;
+                chalkiness = 0.32;
+                density = 0.50;
+                satKeep = 0.68;
+                tintBlend = 0.18;
+                strokeAmount = 0.22;
+                strokeFrequency = 4.6;
+            }
+
+            float blurAmount = clamp(u_bleed * 0.72 + u_absorbency * 0.4, 0.0, 1.0) *
+                               (0.35 + mediumBleed * 0.9);
+            float blurRadius = 0.35 + (u_bleed * 3.5 + u_absorbency * 2.0) * (0.45 + mediumBleed);
+            vec3 softened = sampleSoft(uv, px, blurRadius);
+
+            vec3 pigmentColor = mix(source, softened, blurAmount);
+            if (u_realisticColor > 0.5) {
+                pigmentColor = adjustSaturation(pigmentColor, satKeep);
+                pigmentColor = mix(pigmentColor, pigmentColor * paperTint, tintBlend);
+                pigmentColor = mix(pigmentColor,
+                                   vec3(dot(pigmentColor, vec3(0.2126, 0.7152, 0.0722))),
+                                   chalkiness * 0.22);
+                pigmentColor = clamp(pigmentColor, 0.0, 1.0);
+            }
+
+            float pigment = clamp((1.0 - lum) * 0.72 + sat * 0.92, 0.0, 1.0);
+            float pickupField = mix(ridges, valleys, clamp(mediumBleed, 0.0, 1.0));
+            float toothResponse = mix(1.0, 0.72 + pickupField * 0.58, u_tooth * mediumTooth);
+            float settling = mix(1.0, 0.82 + valleys * 0.55 + macro * 0.12, u_absorbency * mediumBleed);
+            float granulation = mix(1.0, 0.78 + valleys * 0.42 + micro * 0.15,
+                                    u_pigmentGranulation * mediumGranulation);
+
+            float strokeMask = 1.0;
+            if (strokeAmount > 0.001) {
+                float stroke = abs(sin(dot(paperCoord, fiberDir) * strokeFrequency + micro * 5.0));
+                strokeMask = mix(1.0, 0.76 + 0.24 * stroke, strokeAmount);
+            }
+
+            float coverage = clamp(pigment * (0.35 + density * 0.65) *
+                                   toothResponse * settling * granulation * strokeMask,
+                                   0.0, 1.0);
+            float edgeMask = clamp(length(source - softened) * (2.2 + mediumEdge), 0.0, 1.0);
+            float edgeDeposit = edgeMask * u_edgeDarkening * mediumEdge * coverage *
+                                (0.55 + 0.45 * valleys);
+
+            vec3 deposited = mix(paperBase, paperBase * max(pigmentColor, vec3(0.03)), coverage);
+            deposited *= 1.0 - edgeDeposit * 0.55;
+            deposited = mix(deposited, paperBase, chalkiness * 0.12 * (1.0 - coverage * 0.5));
+            deposited = clamp(deposited, 0.0, 1.0);
+
+            gl_FragColor = vec4(mix(source, deposited, u_intensity), 1.0);
+        }
+    `,
+
     // THIN FILM INTERFERENCE
     // Fabry-Perot iridescence: R = (1 - cos(delta)) / 2
     // where delta = 4*PI*n*d / lambda. Applied per channel at physical
     // wavelengths R=620nm, G=550nm, B=460nm.
     // Film thickness driven by local luma or flat for soap-bubble look.
-    // ════════════════════════════════════════════════════════════════════
     thin_film: `
         precision mediump float;
         uniform sampler2D u_image;

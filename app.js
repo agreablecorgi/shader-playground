@@ -16,11 +16,31 @@ class ShaderPlayground {
         this.previewFidelity = 'performance'; // 'performance' | 'balanced' | 'high'
         this.currentTheme = 'auto';
         this.image = null;
+        this.sourceImageFile = null;
+        this.sourceImageName = '';
         this.texture = null;
-        this.depthTexture = null;  // MiDAS depth map
+        this.depthTexture = null;
+        this.depthSource = 'pseudo';
         this.normalTexture = null; // Normal map from SHARP
-        this.gaussianData = null;  // Gaussian splatting data
-        this.gaussianMode = false; // Whether to render Gaussians
+        this.gaussianData = null;  // Parsed SHARP/3DGS PLY preview data
+        this.gaussianAsset = null; // Manifest/asset metadata for generated PLY packages
+        this.gaussianBuffers = null;
+        this.gaussianPreviewProgram = null;
+        this.gaussianMode = false; // Whether to render the PLY preview
+        this.plyPreview = {
+            viewMode: 'front',
+            fit: 0.96,
+            panX: 0.0,
+            panY: 0.0,
+            pointScale: 1.25,
+            opacity: 1.0,
+            brightness: 1.0,
+            depthScale: 0.65,
+            density: 120000
+        };
+        this.companionBaseUrl = 'http://127.0.0.1:8765';
+        this.depthGenerationInProgress = false;
+        this.sharpGenerationInProgress = false;
         this.programs = {};
         this.framebuffers = [];
         this.fbTextures = [];
@@ -66,6 +86,78 @@ class ShaderPlayground {
                 fragmentShaders[name]
             );
         });
+        this.gaussianPreviewProgram = this.createGaussianPreviewProgram();
+    }
+
+    createGaussianPreviewProgram() {
+        const vertexSource = `
+            attribute vec3 a_gaussianPosition;
+            attribute vec4 a_gaussianColor;
+            attribute float a_gaussianSize;
+
+            uniform float u_rotationX;
+            uniform float u_rotationY;
+            uniform float u_cameraDistance;
+            uniform float u_aspect;
+            uniform float u_viewMode;
+            uniform float u_fit;
+            uniform vec2 u_pan;
+            uniform float u_pointScale;
+            uniform float u_opacity;
+            uniform float u_brightness;
+            uniform float u_depthScale;
+
+            varying vec4 v_color;
+
+            void main() {
+                float cosX = cos(u_rotationX);
+                float sinX = sin(u_rotationX);
+                float cosY = cos(u_rotationY);
+                float sinY = sin(u_rotationY);
+
+                vec3 p = vec3(a_gaussianPosition.xy, a_gaussianPosition.z * u_depthScale);
+                float rx = p.x * cosY - p.z * sinY;
+                float rz = p.x * sinY + p.z * cosY;
+                float ry = p.y * cosX - rz * sinX;
+                rz = p.y * sinX + rz * cosX;
+                rz += u_cameraDistance;
+
+                if (u_viewMode < 0.5) {
+                    gl_Position = vec4(p.xy * u_fit + u_pan, 0.0, 1.0);
+                    gl_PointSize = clamp(a_gaussianSize * u_pointScale, 1.0, 72.0);
+                    v_color = vec4(a_gaussianColor.rgb * u_brightness, a_gaussianColor.a * u_opacity);
+                    return;
+                }
+
+                if (rz <= 0.02) {
+                    gl_Position = vec4(2.0, 2.0, 1.0, 1.0);
+                    gl_PointSize = 0.0;
+                    v_color = vec4(0.0);
+                    return;
+                }
+
+                float perspective = 1.65 / rz;
+                gl_Position = vec4((rx * perspective * u_fit) / max(u_aspect, 0.001) + u_pan.x, ry * perspective * u_fit + u_pan.y, 0.0, 1.0);
+                gl_PointSize = clamp((a_gaussianSize * u_pointScale) / max(rz * 0.35, 0.25), 1.0, 72.0);
+                v_color = vec4(a_gaussianColor.rgb * u_brightness, a_gaussianColor.a * u_opacity);
+            }
+        `;
+
+        const fragmentSource = `
+            precision mediump float;
+
+            varying vec4 v_color;
+
+            void main() {
+                vec2 centered = gl_PointCoord - vec2(0.5);
+                float radius = length(centered) * 2.0;
+                float alpha = smoothstep(1.0, 0.0, radius) * v_color.a;
+                if (alpha <= 0.01) discard;
+                gl_FragColor = vec4(v_color.rgb, alpha);
+            }
+        `;
+
+        return this.createProgram(vertexSource, fragmentSource);
     }
 
     getDefaultShaderParams() {
@@ -210,8 +302,12 @@ class ShaderPlayground {
                 scale: 1.0
             },
             color_vector_splatting: {
-                splatDistance: 3.0,
-                splatSize: 8.0
+                splatDistance: 14.0,
+                splatSize: 7.0,
+                directionStrength: 0.75,
+                scatter: 0.2,
+                edgePreserve: 0.45,
+                colorBleed: 0.35
             },
             dithering: {
                 algorithm: 1.0,
@@ -409,6 +505,18 @@ class ShaderPlayground {
                 ior:         1.45,
                 lumaWeight:  0.7,
                 strength:    0.8
+            },
+            paper_texture: {
+                paperPreset:         1.0,
+                mediumPreset:        1.0,
+                grainSize:           2.5,
+                textureWeight:       0.6,
+                absorbency:          0.45,
+                bleed:               0.25,
+                tooth:               0.55,
+                edgeDarkening:       0.35,
+                pigmentGranulation:  0.5,
+                realisticColor:      1.0
             }
         };
     }
@@ -536,18 +644,28 @@ class ShaderPlayground {
                         const img = new Image();
                         img.onload = () => {
                             this.setupDepthTexture(img);
-                            // Auto-enable use depth texture if SSAO is active
-                            if (this.shaderParams.ssao) {
-                                this.shaderParams.ssao.useDepthTexture = 1.0;
-                                // Update toggle if visible
-                                const toggle = document.querySelector('[data-param="useDepthTexture"]');
-                                if (toggle) toggle.checked = true;
-                            }
+                            this.setDepthSource('uploaded');
+                            this.enableDepthTextureUsage();
                         };
                         img.src = e.target.result;
                     };
                     reader.readAsDataURL(file);
                 }
+            });
+        }
+
+        const depthGenerateBtn = document.getElementById('depthProGenerateBtn');
+        if (depthGenerateBtn) {
+            depthGenerateBtn.addEventListener('click', () => {
+                this.generateDepthProFromCurrentImage();
+            });
+            this.checkCompanionStatus();
+        }
+
+        const sharpGenerateBtn = document.getElementById('sharpGenerateBtn');
+        if (sharpGenerateBtn) {
+            sharpGenerateBtn.addEventListener('click', () => {
+                this.generateSharpFromCurrentImage();
             });
         }
 
@@ -580,30 +698,13 @@ class ShaderPlayground {
             });
         }
 
-        // Gaussian JSON upload
+        // SHARP/3DGS PLY upload
         const gaussianUploadEl = document.getElementById('gaussianUpload');
         if (gaussianUploadEl) {
             gaussianUploadEl.addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        try {
-                            this.gaussianData = JSON.parse(e.target.result);
-                            console.log(`Loaded ${this.gaussianData.num_gaussians} Gaussians`);
-                            
-                            // Show notification
-                            const notification = document.createElement('div');
-                            notification.style.cssText = 'position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg, #10b981, #3b82f6); color: white; padding: 1rem 1.5rem; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 10000; font-weight: 600;';
-                            notification.textContent = `✓ Loaded ${this.gaussianData.num_gaussians.toLocaleString()} Gaussians`;
-                            document.body.appendChild(notification);
-                            setTimeout(() => notification.remove(), 3000);
-                        } catch (error) {
-                            console.error('Error parsing Gaussian JSON:', error);
-                            alert('Error loading Gaussian data: ' + error.message);
-                        }
-                    };
-                    reader.readAsText(file);
+                    this.loadGaussianPlyFile(file);
                 }
             });
         }
@@ -613,7 +714,7 @@ class ShaderPlayground {
         if (gaussianViewerBtn) {
             gaussianViewerBtn.addEventListener('click', () => {
                 if (!this.gaussianData) {
-                    alert('Please upload a Gaussians JSON file first!');
+                    alert('Generate SHARP or upload a SHARP .ply file first.');
                     return;
                 }
                 this.gaussianMode = !this.gaussianMode;
@@ -626,9 +727,11 @@ class ShaderPlayground {
                     gaussianViewerBtn.style.background = 'linear-gradient(135deg, #10b981, #06b6d4)';
                     gaussianViewerBtn.style.boxShadow = 'none';
                     this.canvas.style.cursor = 'default';
+                    if (this.image) this.renderOnce();
                 }
             });
         }
+        this.setupPlyPreviewControls();
 
         // Effect buttons - add to stack
         document.querySelectorAll('.effect-btn').forEach(btn => {
@@ -753,7 +856,12 @@ class ShaderPlayground {
         
         // Fit button
         document.getElementById('fitBtn').addEventListener('click', () => {
-            this.resetZoomPan();
+            if (this.gaussianMode) {
+                this.resetPlyPreviewView();
+                if (this.image) this.renderOnce();
+            } else {
+                this.resetZoomPan();
+            }
         });
         
         // Zoom and pan controls
@@ -765,9 +873,14 @@ class ShaderPlayground {
             e.preventDefault();
             
             if (this.gaussianMode) {
-                // Adjust camera distance
-                const delta = e.deltaY > 0 ? 1.1 : 0.9;
-                this.cameraDistance = Math.max(0.5, Math.min(10, this.cameraDistance * delta));
+                const delta = e.deltaY > 0 ? 0.92 : 1.08;
+                if (this.plyPreview.viewMode === 'front') {
+                    this.plyPreview.fit = Math.max(0.15, Math.min(8.0, this.plyPreview.fit * delta));
+                } else {
+                    this.cameraDistance = Math.max(0.35, Math.min(12, this.cameraDistance / delta));
+                }
+                this.updatePlyPreviewControls();
+                if (this.image) this.renderOnce();
             } else {
                 // Normal zoom
                 const delta = e.deltaY > 0 ? 0.9 : 1.1;
@@ -807,15 +920,19 @@ class ShaderPlayground {
             if (this.gaussianMode && this.isRotating) {
                 const dx = e.clientX - this.lastRotateX;
                 const dy = e.clientY - this.lastRotateY;
-                
-                this.cameraRotationY += dx * 0.01;
-                this.cameraRotationX += dy * 0.01;
-                
-                // Clamp X rotation to prevent flipping
-                this.cameraRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.cameraRotationX));
+
+                if (this.plyPreview.viewMode === 'front') {
+                    this.plyPreview.panX += (dx / Math.max(1, this.canvas.width)) * 2.0;
+                    this.plyPreview.panY -= (dy / Math.max(1, this.canvas.height)) * 2.0;
+                } else {
+                    this.cameraRotationY += dx * 0.01;
+                    this.cameraRotationX += dy * 0.01;
+                    this.cameraRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.cameraRotationX));
+                }
                 
                 this.lastRotateX = e.clientX;
                 this.lastRotateY = e.clientY;
+                if (this.image) this.renderOnce();
             } else if (this.isPanning) {
                 const dx = e.clientX - this.lastPanX;
                 const dy = e.clientY - this.lastPanY;
@@ -844,6 +961,12 @@ class ShaderPlayground {
             if (this.gaussianMode) {
                 this.canvas.style.cursor = 'grab';
             }
+        });
+
+        canvasWrapper.addEventListener('dblclick', () => {
+            if (!this.gaussianMode) return;
+            this.resetPlyPreviewView();
+            if (this.image) this.renderOnce();
         });
         
         // Drag and drop image upload
@@ -876,6 +999,13 @@ class ShaderPlayground {
             return;
         }
 
+        this.sourceImageFile = file;
+        this.sourceImageName = file.name || 'source-image';
+        this.clearDepthTexture();
+        this.clearGaussianData();
+        this.setDepthSource('pseudo');
+        this.setSharpStatus('SHARP assets not generated.', 'idle');
+
         const reader = new FileReader();
         reader.onload = (e) => {
             const img = new Image();
@@ -890,6 +1020,713 @@ class ShaderPlayground {
             img.src = e.target.result;
         };
         reader.readAsDataURL(file);
+    }
+
+    setDepthProStatus(message, state = 'idle') {
+        const status = document.getElementById('depthProStatus');
+        if (!status) return;
+
+        status.textContent = message;
+        status.dataset.state = state;
+    }
+
+    setSharpStatus(message, state = 'idle') {
+        const status = document.getElementById('sharpStatus');
+        if (!status) return;
+
+        status.textContent = message;
+        status.dataset.state = state;
+    }
+
+    setupPlyPreviewControls() {
+        const bindButton = (id, handler) => {
+            const button = document.getElementById(id);
+            if (button) button.addEventListener('click', handler);
+        };
+        const bindSlider = (id, key, parser = parseFloat) => {
+            const input = document.getElementById(id);
+            if (!input) return;
+
+            input.addEventListener('input', () => {
+                this.plyPreview[key] = parser(input.value);
+                if (key === 'density') {
+                    this.rebuildGaussianBuffers();
+                }
+                this.updatePlyPreviewControls();
+                if (this.image) this.renderOnce();
+            });
+        };
+
+        bindButton('plyFrontBtn', () => {
+            this.plyPreview.viewMode = 'front';
+            this.cameraRotationX = 0;
+            this.cameraRotationY = 0;
+            this.updatePlyPreviewControls();
+            if (this.image) this.renderOnce();
+        });
+        bindButton('plyOrbitBtn', () => {
+            this.plyPreview.viewMode = 'orbit';
+            this.updatePlyPreviewControls();
+            if (this.image) this.renderOnce();
+        });
+        bindButton('plyResetBtn', () => {
+            this.resetPlyPreviewView();
+            if (this.image) this.renderOnce();
+        });
+
+        bindSlider('plyPointScale', 'pointScale');
+        bindSlider('plyOpacity', 'opacity');
+        bindSlider('plyDensity', 'density', value => parseInt(value, 10));
+        bindSlider('plyDepthScale', 'depthScale');
+        this.updatePlyPreviewControls();
+    }
+
+    resetPlyPreviewView(rebuildBuffers = true) {
+        this.plyPreview.viewMode = 'front';
+        this.plyPreview.fit = 0.96;
+        this.plyPreview.panX = 0.0;
+        this.plyPreview.panY = 0.0;
+        this.plyPreview.pointScale = 1.25;
+        this.plyPreview.opacity = 1.0;
+        this.plyPreview.brightness = 1.0;
+        this.plyPreview.depthScale = 0.65;
+        this.plyPreview.density = 120000;
+        this.cameraRotationX = 0;
+        this.cameraRotationY = 0;
+        this.cameraDistance = 3.0;
+        if (rebuildBuffers && this.gaussianData) {
+            this.rebuildGaussianBuffers();
+        }
+        this.updatePlyPreviewControls();
+    }
+
+    updatePlyPreviewControls() {
+        const controls = document.getElementById('plyPreviewControls');
+        if (controls) controls.hidden = !this.gaussianData;
+
+        const setActive = (id, active) => {
+            const button = document.getElementById(id);
+            if (button) button.dataset.active = active ? 'true' : 'false';
+        };
+        setActive('plyFrontBtn', this.plyPreview.viewMode === 'front');
+        setActive('plyOrbitBtn', this.plyPreview.viewMode === 'orbit');
+
+        const setSlider = (id, value) => {
+            const input = document.getElementById(id);
+            if (input && document.activeElement !== input) {
+                input.value = String(value);
+            }
+        };
+        setSlider('plyPointScale', this.plyPreview.pointScale);
+        setSlider('plyOpacity', this.plyPreview.opacity);
+        setSlider('plyDensity', this.plyPreview.density);
+        setSlider('plyDepthScale', this.plyPreview.depthScale);
+    }
+
+    setDepthSource(source, detail = '') {
+        this.depthSource = source;
+
+        const labels = {
+            pseudo: 'Pseudo depth',
+            uploaded: 'Uploaded depth map',
+            depthPro: 'Depth Pro map'
+        };
+        const state = source === 'pseudo' ? 'idle' : 'ready';
+        const suffix = detail ? ` ${detail}` : '';
+        this.setDepthProStatus(`Depth source: ${labels[source] || source}.${suffix}`, state);
+    }
+
+    async checkCompanionStatus() {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 1200);
+
+        try {
+            const response = await fetch(`${this.companionBaseUrl}/health`, {
+                signal: controller.signal,
+                cache: 'no-store'
+            });
+            const payload = await response.json();
+            if (!payload.ok) throw new Error('Companion did not report ready.');
+
+            const checkpointText = payload.depth_pro_checkpoint
+                ? 'Depth Pro ready.'
+                : 'Run setup_depth_pro.bat before generating.';
+            this.setDepthProStatus(`Companion connected. ${checkpointText}`, payload.depth_pro_checkpoint ? 'ready' : 'idle');
+
+            const sharpText = payload.sharp_cli
+                ? 'SHARP CLI ready.'
+                : 'Run setup_sharp.bat before SHARP generation.';
+            this.setSharpStatus(sharpText, payload.sharp_cli ? 'ready' : 'idle');
+        } catch (error) {
+            this.setDepthProStatus('Start start_companion.bat for automatic depth.', 'idle');
+            this.setSharpStatus('Start companion for SHARP generation.', 'idle');
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    async generateDepthProFromCurrentImage() {
+        if (!this.sourceImageFile) {
+            this.setDepthProStatus('Upload an image before generating depth.', 'error');
+            return;
+        }
+
+        if (this.depthGenerationInProgress) {
+            return;
+        }
+
+        this.depthGenerationInProgress = true;
+        const button = document.getElementById('depthProGenerateBtn');
+        if (button) button.disabled = true;
+        this.setDepthProStatus('Generating Depth Pro map...', 'working');
+
+        try {
+            const filename = encodeURIComponent(this.sourceImageName || this.sourceImageFile.name || 'source-image');
+            const response = await fetch(`${this.companionBaseUrl}/depth-pro?filename=${filename}`, {
+                method: 'POST',
+                body: this.sourceImageFile,
+                headers: {
+                    'Content-Type': this.sourceImageFile.type || 'application/octet-stream'
+                }
+            });
+
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || `Companion returned HTTP ${response.status}`);
+            }
+
+            await this.loadDepthTextureFromUrl(payload.depth_url);
+            const cacheText = payload.cached ? 'Loaded cached Depth Pro map.' : 'Generated Depth Pro map.';
+            this.setDepthSource('depthPro', `${cacheText} Package ${payload.asset_id}.`);
+        } catch (error) {
+            this.setDepthProStatus(error.message || 'Depth Pro generation failed.', 'error');
+        } finally {
+            this.depthGenerationInProgress = false;
+            if (button) button.disabled = false;
+        }
+    }
+
+    async generateSharpFromCurrentImage() {
+        if (!this.sourceImageFile) {
+            this.setSharpStatus('Upload an image before generating SHARP assets.', 'error');
+            return;
+        }
+
+        if (this.sharpGenerationInProgress) {
+            return;
+        }
+
+        this.sharpGenerationInProgress = true;
+        const button = document.getElementById('sharpGenerateBtn');
+        if (button) button.disabled = true;
+        this.setSharpStatus('Generating SHARP 3DGS assets...', 'working');
+
+        try {
+            const filename = encodeURIComponent(this.sourceImageName || this.sourceImageFile.name || 'source-image');
+            const response = await fetch(`${this.companionBaseUrl}/sharp?filename=${filename}`, {
+                method: 'POST',
+                body: this.sourceImageFile,
+                headers: {
+                    'Content-Type': this.sourceImageFile.type || 'application/octet-stream'
+                }
+            });
+
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.error || `Companion returned HTTP ${response.status}`);
+            }
+
+            const cacheText = payload.cached ? 'Loaded cached SHARP assets.' : 'Generated SHARP assets.';
+            this.setSharpStatus(`${cacheText} Loading PLY preview...`, 'working');
+            await this.loadGaussianPlyFromUrl(payload.ply_url, payload);
+        } catch (error) {
+            this.setSharpStatus(error.message || 'SHARP generation failed.', 'error');
+        } finally {
+            this.sharpGenerationInProgress = false;
+            if (button) button.disabled = false;
+        }
+    }
+
+    async loadGaussianPlyFile(file) {
+        this.setSharpStatus('Loading SHARP PLY...', 'working');
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const data = this.parsePlyGaussians(arrayBuffer, file.name || 'gaussians.ply');
+            this.setGaussianData(data, {
+                source: 'upload',
+                fileName: file.name || 'gaussians.ply'
+            });
+        } catch (error) {
+            this.setSharpStatus(error.message || 'Could not load SHARP PLY.', 'error');
+            alert('Error loading SHARP PLY: ' + (error.message || error));
+        } finally {
+            const upload = document.getElementById('gaussianUpload');
+            if (upload) upload.value = '';
+        }
+    }
+
+    async loadGaussianPlyFromUrl(url, payload = {}) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`Could not load generated SHARP PLY (${response.status}).`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const data = this.parsePlyGaussians(arrayBuffer, payload.ply_path || 'sharp.ply');
+        this.setGaussianData(data, {
+            source: 'companion',
+            assetId: payload.asset_id,
+            packageDir: payload.package_dir,
+            plyPath: payload.ply_path,
+            plyUrl: payload.ply_url,
+            manifest: payload.manifest,
+            cached: !!payload.cached
+        });
+    }
+
+    setGaussianData(data, asset = {}) {
+        this.disposeGaussianBuffers();
+        this.gaussianData = data;
+        this.gaussianAsset = asset;
+        this.resetPlyPreviewView(false);
+        this.rebuildGaussianBuffers();
+
+        const cacheText = asset.source === 'companion'
+            ? `${asset.cached ? 'Cached' : 'Generated'} package ${asset.assetId}.`
+            : `Loaded ${asset.fileName || data.fileName}.`;
+        const previewText = this.gaussianBuffers && this.gaussianBuffers.stride > 1
+            ? ` Previewing ${this.gaussianBuffers.count.toLocaleString()} sampled splats.`
+            : '';
+        this.setSharpStatus(
+            `${cacheText} ${data.num_gaussians.toLocaleString()} PLY splats ready.${previewText}`,
+            'ready'
+        );
+
+        if (this.gaussianMode && this.image) {
+            this.renderOnce();
+        }
+    }
+
+    clearGaussianData() {
+        this.disposeGaussianBuffers();
+        this.gaussianData = null;
+        this.gaussianAsset = null;
+        this.gaussianMode = false;
+        const gaussianViewerBtn = document.querySelector('.gaussian-viewer-btn');
+        if (gaussianViewerBtn) {
+            gaussianViewerBtn.style.background = '';
+            gaussianViewerBtn.style.boxShadow = 'none';
+        }
+        if (this.canvas) {
+            this.canvas.style.cursor = 'default';
+        }
+        this.updatePlyPreviewControls();
+    }
+
+    disposeGaussianBuffers() {
+        if (!this.gaussianBuffers) return;
+
+        const gl = this.gl;
+        ['position', 'color', 'size'].forEach(key => {
+            if (this.gaussianBuffers[key]) {
+                gl.deleteBuffer(this.gaussianBuffers[key]);
+            }
+        });
+        this.gaussianBuffers = null;
+    }
+
+    rebuildGaussianBuffers() {
+        if (!this.gaussianData || !this.gaussianPreviewProgram) return;
+
+        const gl = this.gl;
+        const total = this.gaussianData.num_gaussians || 0;
+        const renderLimit = Math.max(1000, this.plyPreview.density || 120000);
+        const stride = Math.max(1, Math.ceil(total / renderLimit));
+        const count = Math.ceil(total / stride);
+        const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 4);
+        const sizes = new Float32Array(count);
+
+        for (let sourceIndex = 0, targetIndex = 0; sourceIndex < total; sourceIndex += stride, targetIndex++) {
+            const src3 = sourceIndex * 3;
+            const dst3 = targetIndex * 3;
+            const src4 = sourceIndex * 4;
+            const dst4 = targetIndex * 4;
+
+            positions[dst3] = this.gaussianData.positions[src3];
+            positions[dst3 + 1] = this.gaussianData.positions[src3 + 1];
+            positions[dst3 + 2] = this.gaussianData.positions[src3 + 2];
+
+            colors[dst4] = this.gaussianData.colors[src4];
+            colors[dst4 + 1] = this.gaussianData.colors[src4 + 1];
+            colors[dst4 + 2] = this.gaussianData.colors[src4 + 2];
+            colors[dst4 + 3] = this.gaussianData.colors[src4 + 3];
+
+            sizes[targetIndex] = this.gaussianData.sizes[sourceIndex];
+        }
+
+        const createArrayBuffer = (dataArray) => {
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, dataArray, gl.STATIC_DRAW);
+            return buffer;
+        };
+
+        this.gaussianBuffers = {
+            position: createArrayBuffer(positions),
+            color: createArrayBuffer(colors),
+            size: createArrayBuffer(sizes),
+            count,
+            stride
+        };
+    }
+
+    parsePlyGaussians(arrayBuffer, fileName = 'gaussians.ply') {
+        if (ArrayBuffer.isView(arrayBuffer)) {
+            arrayBuffer = arrayBuffer.buffer.slice(
+                arrayBuffer.byteOffset,
+                arrayBuffer.byteOffset + arrayBuffer.byteLength
+            );
+        }
+
+        const bytes = new Uint8Array(arrayBuffer);
+        const decoder = new TextDecoder('utf-8');
+        const headerProbe = decoder.decode(bytes.subarray(0, Math.min(bytes.length, 262144)));
+        const endHeaderIndex = headerProbe.indexOf('end_header');
+        if (endHeaderIndex < 0) {
+            throw new Error('Invalid PLY: missing end_header.');
+        }
+
+        const headerLineEnd = headerProbe.indexOf('\n', endHeaderIndex);
+        const headerByteLength = headerLineEnd >= 0
+            ? headerLineEnd + 1
+            : endHeaderIndex + 'end_header'.length;
+        const header = headerProbe.slice(0, headerByteLength).replace(/\r/g, '');
+        const lines = header.split('\n').map(line => line.trim()).filter(Boolean);
+        if (lines[0] !== 'ply') {
+            throw new Error('Invalid PLY: missing ply header.');
+        }
+
+        let format = '';
+        let vertexCount = 0;
+        let activeElement = '';
+        const vertexProperties = [];
+
+        lines.forEach(line => {
+            const parts = line.split(/\s+/);
+            if (parts[0] === 'format') {
+                format = parts[1];
+                return;
+            }
+            if (parts[0] === 'element') {
+                activeElement = parts[1];
+                if (activeElement === 'vertex') {
+                    vertexCount = parseInt(parts[2], 10) || 0;
+                }
+                return;
+            }
+            if (parts[0] === 'property' && activeElement === 'vertex') {
+                if (parts[1] === 'list') {
+                    throw new Error('PLY vertex list properties are not supported yet.');
+                }
+                vertexProperties.push({
+                    type: parts[1].toLowerCase(),
+                    name: parts[2]
+                });
+            }
+        });
+
+        if (!vertexCount || vertexProperties.length === 0) {
+            throw new Error('PLY does not contain vertex splats.');
+        }
+        if (!['ascii', 'binary_little_endian'].includes(format)) {
+            throw new Error(`Unsupported PLY format: ${format || 'unknown'}.`);
+        }
+
+        const typeInfo = {
+            char: [1, 'getInt8'],
+            int8: [1, 'getInt8'],
+            uchar: [1, 'getUint8'],
+            uint8: [1, 'getUint8'],
+            short: [2, 'getInt16'],
+            int16: [2, 'getInt16'],
+            ushort: [2, 'getUint16'],
+            uint16: [2, 'getUint16'],
+            int: [4, 'getInt32'],
+            int32: [4, 'getInt32'],
+            uint: [4, 'getUint32'],
+            uint32: [4, 'getUint32'],
+            float: [4, 'getFloat32'],
+            float32: [4, 'getFloat32'],
+            double: [8, 'getFloat64'],
+            float64: [8, 'getFloat64']
+        };
+
+        let byteStride = 0;
+        const properties = vertexProperties.map((property, index) => {
+            const info = typeInfo[property.type];
+            if (!info) {
+                throw new Error(`Unsupported PLY property type: ${property.type}.`);
+            }
+            const resolved = {
+                ...property,
+                index,
+                size: info[0],
+                getter: info[1],
+                offset: byteStride
+            };
+            byteStride += info[0];
+            return resolved;
+        });
+
+        const propertyMap = new Map();
+        properties.forEach(property => propertyMap.set(property.name.toLowerCase(), property));
+        const pickProperty = (names) => names.map(name => propertyMap.get(name.toLowerCase())).find(Boolean);
+        const xProp = pickProperty(['x']);
+        const yProp = pickProperty(['y']);
+        const zProp = pickProperty(['z']);
+        if (!xProp || !yProp || !zProp) {
+            throw new Error('PLY is missing x/y/z vertex positions.');
+        }
+
+        const redProp = pickProperty(['red', 'diffuse_red', 'r']);
+        const greenProp = pickProperty(['green', 'diffuse_green', 'g']);
+        const blueProp = pickProperty(['blue', 'diffuse_blue', 'b']);
+        const fdc0Prop = pickProperty(['f_dc_0']);
+        const fdc1Prop = pickProperty(['f_dc_1']);
+        const fdc2Prop = pickProperty(['f_dc_2']);
+        const opacityProp = pickProperty(['opacity', 'alpha']);
+        const scaleProps = [
+            pickProperty(['scale_0', 'scale_x']),
+            pickProperty(['scale_1', 'scale_y']),
+            pickProperty(['scale_2', 'scale_z'])
+        ];
+        const scalarScaleProp = pickProperty(['scale', 'radius', 'size']);
+
+        const positions = new Float32Array(vertexCount * 3);
+        const colors = new Float32Array(vertexCount * 4);
+        const rawSizes = new Float32Array(vertexCount);
+        const boundsMin = [Infinity, Infinity, Infinity];
+        const boundsMax = [-Infinity, -Infinity, -Infinity];
+        const sampleStride = Math.max(1, Math.floor(vertexCount / 8192));
+        const sampledX = [];
+        const sampledY = [];
+        const sampledZ = [];
+        const view = format === 'binary_little_endian' ? new DataView(arrayBuffer) : null;
+        const asciiLines = format === 'ascii'
+            ? decoder.decode(bytes.subarray(headerByteLength)).trim().split(/\r?\n/)
+            : null;
+
+        const clamp01 = value => Math.max(0, Math.min(1, value));
+        const sigmoid = value => 1 / (1 + Math.exp(-Math.max(-60, Math.min(60, value))));
+        const readBinaryValue = (baseOffset, property) => {
+            const offset = baseOffset + property.offset;
+            if (property.size === 1) {
+                return view[property.getter](offset);
+            }
+            return view[property.getter](offset, true);
+        };
+        const normalizeColor = (value, property) => {
+            if (!Number.isFinite(value)) return 1;
+            if (property && (property.type === 'uchar' || property.type === 'uint8' || value > 1.5)) {
+                return clamp01(value / 255);
+            }
+            return clamp01(value);
+        };
+
+        for (let i = 0; i < vertexCount; i++) {
+            const asciiValues = asciiLines ? asciiLines[i].trim().split(/\s+/) : null;
+            const binaryBase = headerByteLength + i * byteStride;
+            const getValue = (property) => {
+                if (!property) return undefined;
+                if (asciiValues) {
+                    return parseFloat(asciiValues[property.index]);
+                }
+                return readBinaryValue(binaryBase, property);
+            };
+
+            const rawX = getValue(xProp);
+            const rawY = getValue(yProp);
+            const rawZ = getValue(zProp);
+            const posIndex = i * 3;
+            positions[posIndex] = rawX;
+            positions[posIndex + 1] = rawY;
+            positions[posIndex + 2] = rawZ;
+
+            boundsMin[0] = Math.min(boundsMin[0], rawX);
+            boundsMin[1] = Math.min(boundsMin[1], rawY);
+            boundsMin[2] = Math.min(boundsMin[2], rawZ);
+            boundsMax[0] = Math.max(boundsMax[0], rawX);
+            boundsMax[1] = Math.max(boundsMax[1], rawY);
+            boundsMax[2] = Math.max(boundsMax[2], rawZ);
+
+            if (i % sampleStride === 0) {
+                sampledX.push(rawX);
+                sampledY.push(rawY);
+                sampledZ.push(rawZ);
+            }
+
+            const colorIndex = i * 4;
+            if (redProp && greenProp && blueProp) {
+                colors[colorIndex] = normalizeColor(getValue(redProp), redProp);
+                colors[colorIndex + 1] = normalizeColor(getValue(greenProp), greenProp);
+                colors[colorIndex + 2] = normalizeColor(getValue(blueProp), blueProp);
+            } else if (fdc0Prop && fdc1Prop && fdc2Prop) {
+                const sphericalHarmonicC0 = 0.28209479177387814;
+                colors[colorIndex] = clamp01(0.5 + sphericalHarmonicC0 * getValue(fdc0Prop));
+                colors[colorIndex + 1] = clamp01(0.5 + sphericalHarmonicC0 * getValue(fdc1Prop));
+                colors[colorIndex + 2] = clamp01(0.5 + sphericalHarmonicC0 * getValue(fdc2Prop));
+            } else {
+                colors[colorIndex] = 1;
+                colors[colorIndex + 1] = 1;
+                colors[colorIndex + 2] = 1;
+            }
+
+            if (opacityProp) {
+                const opacityValue = getValue(opacityProp);
+                colors[colorIndex + 3] = (opacityProp.type === 'uchar' || opacityProp.type === 'uint8')
+                    ? clamp01(opacityValue / 255)
+                    : sigmoid(opacityValue);
+            } else {
+                colors[colorIndex + 3] = 0.85;
+            }
+
+            if (scaleProps.every(Boolean)) {
+                const sx = Math.exp(Math.max(-12, Math.min(4, getValue(scaleProps[0]))));
+                const sy = Math.exp(Math.max(-12, Math.min(4, getValue(scaleProps[1]))));
+                const sz = Math.exp(Math.max(-12, Math.min(4, getValue(scaleProps[2]))));
+                rawSizes[i] = (sx + sy + sz) / 3;
+            } else if (scalarScaleProp) {
+                rawSizes[i] = Math.max(0, getValue(scalarScaleProp));
+            } else {
+                rawSizes[i] = 0;
+            }
+        }
+
+        const quantile = (values, q) => {
+            if (!values.length) return 0;
+            values.sort((a, b) => a - b);
+            const index = Math.max(0, Math.min(values.length - 1, Math.floor((values.length - 1) * q)));
+            return values[index];
+        };
+        const robustMin = [
+            quantile(sampledX, 0.01),
+            quantile(sampledY, 0.01),
+            quantile(sampledZ, 0.01)
+        ];
+        const robustMax = [
+            quantile(sampledX, 0.99),
+            quantile(sampledY, 0.99),
+            quantile(sampledZ, 0.99)
+        ];
+        const center = [
+            (robustMin[0] + robustMax[0]) * 0.5,
+            (robustMin[1] + robustMax[1]) * 0.5,
+            (robustMin[2] + robustMax[2]) * 0.5
+        ];
+        const safeRange = (robustRange, fullRange) => (
+            Number.isFinite(robustRange) && robustRange > 1e-6
+                ? robustRange
+                : Math.max(fullRange, 1e-6)
+        );
+        const frontExtentX = safeRange(robustMax[0] - robustMin[0], boundsMax[0] - boundsMin[0]);
+        const frontExtentY = safeRange(robustMax[1] - robustMin[1], boundsMax[1] - boundsMin[1]);
+        const depthExtent = safeRange(robustMax[2] - robustMin[2], boundsMax[2] - boundsMin[2]);
+        const extent = Math.max(boundsMax[0] - boundsMin[0], boundsMax[1] - boundsMin[1], boundsMax[2] - boundsMin[2], 1e-6);
+        const sizes = new Float32Array(vertexCount);
+
+        for (let i = 0; i < vertexCount; i++) {
+            const posIndex = i * 3;
+            positions[posIndex] = (positions[posIndex] - center[0]) / (frontExtentX * 0.5);
+            positions[posIndex + 1] = -(positions[posIndex + 1] - center[1]) / (frontExtentY * 0.5);
+            positions[posIndex + 2] = (positions[posIndex + 2] - center[2]) / (depthExtent * 0.5);
+
+            const worldSize = rawSizes[i] > 0 ? rawSizes[i] : extent / 420;
+            sizes[i] = Math.max(1.2, Math.min(28, (worldSize / Math.max(frontExtentX, frontExtentY)) * 720));
+        }
+
+        return {
+            format: 'ply',
+            fileName,
+            plyFormat: format,
+            num_gaussians: vertexCount,
+            positions,
+            colors,
+            sizes,
+            bounds: {
+                min: boundsMin,
+                max: boundsMax,
+                robustMin,
+                robustMax,
+                center,
+                extent,
+                frontExtentX,
+                frontExtentY,
+                depthExtent
+            },
+            properties: vertexProperties.map(property => property.name)
+        };
+    }
+
+    async loadDepthTextureFromUrl(url) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`Could not load generated depth map (${response.status}).`);
+        }
+
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+
+        try {
+            await new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    this.setupDepthTexture(img);
+                    this.enableDepthTextureUsage();
+                    if (this.image) this.renderOnce();
+                    resolve();
+                };
+                img.onerror = () => reject(new Error('Generated depth map could not be decoded.'));
+                img.src = objectUrl;
+            });
+        } finally {
+            URL.revokeObjectURL(objectUrl);
+        }
+    }
+
+    enableDepthTextureUsage() {
+        Object.keys(this.shaderParams).forEach(shaderName => {
+            const params = this.shaderParams[shaderName];
+            if (params && Object.prototype.hasOwnProperty.call(params, 'useDepthTexture')) {
+                params.useDepthTexture = 1.0;
+            }
+        });
+
+        document.querySelectorAll('[data-param="useDepthTexture"]').forEach(toggle => {
+            if (toggle.type === 'checkbox') {
+                toggle.checked = true;
+            }
+        });
+    }
+
+    shaderUsesDepthTexture(shaderName) {
+        const defaults = this.getDefaultShaderParams()[shaderName];
+        return !!defaults && Object.prototype.hasOwnProperty.call(defaults, 'useDepthTexture');
+    }
+
+    clearDepthTexture() {
+        if (this.depthTexture) {
+            this.gl.deleteTexture(this.depthTexture);
+            this.depthTexture = null;
+        }
+
+        Object.keys(this.shaderParams).forEach(shaderName => {
+            const params = this.shaderParams[shaderName];
+            if (params && Object.prototype.hasOwnProperty.call(params, 'useDepthTexture')) {
+                params.useDepthTexture = 0.0;
+            }
+        });
     }
 
     setupTexture() {
@@ -1120,6 +1957,13 @@ class ShaderPlayground {
             blendMode: 'normal',
             opacity: 1.0
         });
+
+        if (this.depthTexture && this.shaderUsesDepthTexture(shaderName)) {
+            if (!this.shaderParams[shaderName]) {
+                this.shaderParams[shaderName] = {};
+            }
+            this.shaderParams[shaderName].useDepthTexture = 1.0;
+        }
         
         this.updateStackUI();
         this.selectShader(shaderId);
@@ -1396,9 +2240,13 @@ class ShaderPlayground {
                 { name: 'scale', label: 'Scale', min: 0.1, max: 5, step: 0.1, default: 1.0 }
             ],
             color_vector_splatting: [
-                { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
-                { name: 'splatDistance', label: 'Splat Distance', min: 0.5, max: 10, step: 0.5, default: 3.0 },
-                { name: 'splatSize', label: 'Splat Size', min: 2, max: 20, step: 1, default: 8.0 }
+                { name: 'intensity', label: 'Blend', min: 0, max: 1, step: 0.01, default: 0.65, isPerShader: true },
+                { name: 'splatDistance', label: 'Travel (px)', min: 0, max: 40, step: 0.5, default: 14.0 },
+                { name: 'splatSize', label: 'Splat Radius', min: 1, max: 28, step: 0.5, default: 7.0 },
+                { name: 'directionStrength', label: 'Flow Strength', min: 0, max: 2, step: 0.05, default: 0.75 },
+                { name: 'scatter', label: 'Scatter', min: 0, max: 1, step: 0.01, default: 0.2 },
+                { name: 'edgePreserve', label: 'Edge Preserve', min: 0, max: 1, step: 0.01, default: 0.45 },
+                { name: 'colorBleed', label: 'Color Bleed', min: 0, max: 1, step: 0.01, default: 0.35 }
             ],
             filter_red25: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true }
@@ -1447,7 +2295,7 @@ class ShaderPlayground {
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'radius', label: 'Sample Radius', min: 1, max: 30, step: 1, default: 10.0 },
                 { name: 'bias', label: 'Bias', min: 0, max: 0.1, step: 0.005, default: 0.02 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'previewMode', label: 'Preview Mode', type: 'tabs', default: 0,
                   options: ['Apply Effect', 'Show AO Map', 'Show Depth Map'] }
             ],
@@ -1456,7 +2304,7 @@ class ShaderPlayground {
                 { name: 'focalDepth', label: 'Focal Depth', min: 0, max: 1, step: 0.01, default: 0.5 },
                 { name: 'focalRange', label: 'Focal Range', min: 0.01, max: 0.5, step: 0.01, default: 0.2 },
                 { name: 'bokehStrength', label: 'Bokeh Strength', min: 1, max: 20, step: 0.5, default: 8.0 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             tilt_shift: [
@@ -1464,20 +2312,20 @@ class ShaderPlayground {
                 { name: 'focusPosition', label: 'Focus Position', min: 0, max: 1, step: 0.01, default: 0.5 },
                 { name: 'focusWidth', label: 'Focus Width', min: 0.01, max: 0.3, step: 0.01, default: 0.1 },
                 { name: 'blurStrength', label: 'Blur Strength', min: 1, max: 30, step: 1, default: 10.0 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             atmospheric_fog: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'fogStart', label: 'Fog Start', min: 0, max: 1, step: 0.01, default: 0.3 },
                 { name: 'fogDensity', label: 'Fog Density', min: 0, max: 1, step: 0.01, default: 0.8 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_anaglyph: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'separation', label: 'Eye Separation', min: 0, max: 20, step: 0.5, default: 5.0 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_peeling: [
@@ -1485,20 +2333,20 @@ class ShaderPlayground {
                 { name: 'minDepth', label: 'Min Depth', min: 0, max: 1, step: 0.01, default: 0.0 },
                 { name: 'maxDepth', label: 'Max Depth', min: 0, max: 1, step: 0.01, default: 0.5 },
                 { name: 'feather', label: 'Feather', min: 0, max: 0.3, step: 0.01, default: 0.1 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_color_grade: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'colorMix', label: 'Color Mix', min: 0, max: 1, step: 0.01, default: 0.5 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_edge_glow: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'threshold', label: 'Edge Threshold', min: 0, max: 0.5, step: 0.01, default: 0.1 },
                 { name: 'glowWidth', label: 'Glow Width', min: 0, max: 5, step: 0.1, default: 2.0 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_selective_sharpen: [
@@ -1506,14 +2354,14 @@ class ShaderPlayground {
                 { name: 'focusDepth', label: 'Focus Depth', min: 0, max: 1, step: 0.01, default: 0.5 },
                 { name: 'focusRange', label: 'Focus Range', min: 0.05, max: 0.5, step: 0.01, default: 0.3 },
                 { name: 'sharpness', label: 'Sharpness', min: 0.5, max: 3, step: 0.1, default: 1.5 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_displacement: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'strength', label: 'Displacement Strength', min: 0, max: 20, step: 0.5, default: 5.0 },
                 { name: 'angle', label: 'Angle (rad)', min: 0, max: 6.28, step: 0.1, default: 0.785 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_relief: [
@@ -1521,14 +2369,14 @@ class ShaderPlayground {
                 { name: 'lightAngle', label: 'Light Angle (rad)', min: 0, max: 6.28, step: 0.1, default: 0.785 },
                 { name: 'lightHeight', label: 'Light Height', min: 0.5, max: 5, step: 0.1, default: 2.0 },
                 { name: 'bumpStrength', label: 'Bump Strength', min: 1, max: 20, step: 0.5, default: 5.0 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_halftone: [
                 { name: 'intensity', label: 'Intensity', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
                 { name: 'minDotSize', label: 'Min Dot Size', min: 1, max: 10, step: 0.5, default: 3.0 },
                 { name: 'maxDotSize', label: 'Max Dot Size', min: 5, max: 30, step: 1, default: 15.0 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             depth_shadow: [
@@ -1536,7 +2384,7 @@ class ShaderPlayground {
                 { name: 'shadowAngle', label: 'Shadow Angle (rad)', min: 0, max: 6.28, step: 0.1, default: 2.356 },
                 { name: 'shadowDistance', label: 'Shadow Distance', min: 0, max: 30, step: 1, default: 10.0 },
                 { name: 'shadowSoftness', label: 'Shadow Softness', min: 0, max: 1, step: 0.05, default: 0.2 },
-                { name: 'useDepthTexture', label: 'Use MiDAS Depth', type: 'toggle', default: 0 },
+                { name: 'useDepthTexture', label: 'Use Depth Map', type: 'toggle', default: 0 },
                 { name: 'invertDepth', label: 'Invert Depth', type: 'toggle', default: 0 }
             ],
             sharp_3d_view: [
@@ -1646,6 +2494,21 @@ class ShaderPlayground {
                 { name: 'ior',        label: 'Refractive Index', min: 1.0, max: 2.5, step: 0.05, default: 1.45 },
                 { name: 'lumaWeight', label: 'Luma Modulation', min: 0,   max: 1,   step: 0.01, default: 0.7  },
                 { name: 'strength',   label: 'Iridescence',    min: 0,   max: 1,   step: 0.01, default: 0.8  }
+            ],
+            paper_texture: [
+                { name: 'intensity',          label: 'Blend',                  min: 0,   max: 1,   step: 0.01, default: 1.0, isPerShader: true },
+                { name: 'paperPreset',        label: 'Paper Stock',            type: 'dropdown', default: 1.0,
+                  options: ['Smooth', 'Cotton', 'Rough', 'Papyrus', 'Newsprint'] },
+                { name: 'mediumPreset',       label: 'Medium',                 type: 'dropdown', default: 1.0,
+                  options: ['Ink', 'Watercolor', 'Marker', 'Colored Pencil', 'Pastel'] },
+                { name: 'grainSize',          label: 'Grain Size',             min: 0.5, max: 8,   step: 0.1,  default: 2.5  },
+                { name: 'textureWeight',      label: 'Texture Weight',         min: 0,   max: 1,   step: 0.01, default: 0.6  },
+                { name: 'absorbency',         label: 'Ink Absorption',         min: 0,   max: 1,   step: 0.01, default: 0.45 },
+                { name: 'bleed',              label: 'Bleed Spread',           min: 0,   max: 1,   step: 0.01, default: 0.25 },
+                { name: 'tooth',              label: 'Paper Tooth',            min: 0,   max: 1,   step: 0.01, default: 0.55 },
+                { name: 'edgeDarkening',      label: 'Edge Darkening',         min: 0,   max: 1,   step: 0.01, default: 0.35 },
+                { name: 'pigmentGranulation', label: 'Pigment Settling',       min: 0,   max: 1,   step: 0.01, default: 0.5  },
+                { name: 'realisticColor',     label: 'Realistic Medium Color', type: 'toggle', default: 1.0 }
             ],
 
             original: []
@@ -2192,126 +3055,57 @@ class ShaderPlayground {
         const gl = this.gl;
         const canvas = this.canvas;
         const data = this.gaussianData;
-        
-        // Clear canvas
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.05, 0.05, 0.1, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        
-        if (!data.positions || data.positions.length === 0) {
-            return;
+
+        if (!data || !this.gaussianPreviewProgram) return;
+        if (!this.gaussianBuffers) {
+            this.rebuildGaussianBuffers();
         }
-        
-        // Create camera matrices
-        const aspect = canvas.width / canvas.height;
-        const fov = 60 * Math.PI / 180;
-        
-        // Camera view matrix (rotate and translate)
-        const cosX = Math.cos(this.cameraRotationX);
-        const sinX = Math.sin(this.cameraRotationX);
-        const cosY = Math.cos(this.cameraRotationY);
-        const sinY = Math.sin(this.cameraRotationY);
-        
-        // Transform each Gaussian and render as a point
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (!ctx) return;
-        
-        // Prepare Gaussians with camera transform
-        const transformedGaussians = [];
-        
-        for (let i = 0; i < Math.min(data.positions.length, 50000); i++) {
-            const pos = data.positions[i];
-            if (!pos || pos.length < 3) continue;
-            
-            let [x, y, z] = pos;
-            
-            // Normalize positions (Gaussians are usually in [-1, 1] range)
-            // Rotate around Y axis
-            let rx = x * cosY - z * sinY;
-            let rz = x * sinY + z * cosY;
-            
-            // Rotate around X axis
-            let ry = y * cosX - rz * sinX;
-            rz = y * sinX + rz * cosX;
-            
-            // Apply camera distance
-            rz += this.cameraDistance;
-            
-            // Skip if behind camera
-            if (rz <= 0) continue;
-            
-            // Perspective projection
-            const scale = (1 / (rz * 0.5)) * Math.min(canvas.width, canvas.height) * 0.3;
-            const screenX = (rx * scale + canvas.width / 2);
-            const screenY = (ry * scale + canvas.height / 2);
-            
-            // Get color
-            const color = data.colors && data.colors[i] ? data.colors[i] : [1, 1, 1];
-            const opacity = data.opacities && data.opacities[i] ? data.opacities[i] : 1.0;
-            
-            // Get scale (size)
-            const sizes = data.scales && data.scales[i] ? data.scales[i] : [0.01, 0.01, 0.01];
-            const avgSize = (sizes[0] + sizes[1] + sizes[2]) / 3;
-            const pointSize = Math.max(1, avgSize * scale * 10);
-            
-            transformedGaussians.push({
-                x: screenX,
-                y: screenY,
-                z: rz,
-                r: Math.floor(color[0] * 255),
-                g: Math.floor(color[1] * 255),
-                b: Math.floor(color[2] * 255),
-                opacity: Math.min(1.0, opacity),
-                size: pointSize
-            });
+        if (!this.gaussianBuffers) return;
+
+        if (this.plyPreview.viewMode === 'front' && this.texture && this.programs.original) {
+            this.renderShader('original', this.texture, null, 1.0);
+        } else {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.clearColor(0.035, 0.04, 0.055, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         }
-        
-        // Sort by depth (far to near for proper alpha blending)
-        transformedGaussians.sort((a, b) => b.z - a.z);
-        
-        // Render using 2D canvas for simplicity (faster than WebGL point sprites for large counts)
-        ctx.fillStyle = 'rgb(13, 13, 26)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Render each Gaussian as a splat
-        for (const g of transformedGaussians) {
-            if (g.x < -g.size || g.x > canvas.width + g.size || 
-                g.y < -g.size || g.y > canvas.height + g.size) {
-                continue;
-            }
-            
-            // Create radial gradient for Gaussian falloff
-            const gradient = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.size);
-            gradient.addColorStop(0, `rgba(${g.r}, ${g.g}, ${g.b}, ${g.opacity})`);
-            gradient.addColorStop(0.5, `rgba(${g.r}, ${g.g}, ${g.b}, ${g.opacity * 0.5})`);
-            gradient.addColorStop(1, `rgba(${g.r}, ${g.g}, ${g.b}, 0)`);
-            
-            ctx.fillStyle = gradient;
-            ctx.fillRect(g.x - g.size, g.y - g.size, g.size * 2, g.size * 2);
-        }
-        
-        // Draw info overlay
-        ctx.fillStyle = 'rgba(16, 185, 129, 0.9)';
-        ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-        ctx.fillText(`Gaussians: ${transformedGaussians.length.toLocaleString()} / ${data.num_gaussians.toLocaleString()}`, 20, 30);
-        ctx.fillText(`Drag: Rotate | Scroll: Zoom`, 20, 50);
-        
-        // Draw rotation indicator
-        ctx.strokeStyle = 'rgba(16, 185, 129, 0.3)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(canvas.width - 50, 50, 30, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
-        ctx.beginPath();
-        ctx.arc(
-            canvas.width - 50 + Math.sin(this.cameraRotationY) * 20,
-            50 + Math.sin(this.cameraRotationX) * 20,
-            5, 0, Math.PI * 2
-        );
-        ctx.fill();
+
+        const program = this.gaussianPreviewProgram;
+        gl.useProgram(program);
+        gl.disable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        const enabledAttributes = [];
+        const bindAttribute = (buffer, name, size) => {
+            const location = gl.getAttribLocation(program, name);
+            if (location < 0) return;
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.enableVertexAttribArray(location);
+            gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
+            enabledAttributes.push(location);
+        };
+
+        bindAttribute(this.gaussianBuffers.position, 'a_gaussianPosition', 3);
+        bindAttribute(this.gaussianBuffers.color, 'a_gaussianColor', 4);
+        bindAttribute(this.gaussianBuffers.size, 'a_gaussianSize', 1);
+
+        gl.uniform1f(gl.getUniformLocation(program, 'u_rotationX'), this.cameraRotationX);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_rotationY'), this.cameraRotationY);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_cameraDistance'), this.cameraDistance);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_aspect'), canvas.width / Math.max(1, canvas.height));
+        gl.uniform1f(gl.getUniformLocation(program, 'u_viewMode'), this.plyPreview.viewMode === 'front' ? 0.0 : 1.0);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_fit'), this.plyPreview.fit);
+        gl.uniform2f(gl.getUniformLocation(program, 'u_pan'), this.plyPreview.panX, this.plyPreview.panY);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_pointScale'), this.plyPreview.pointScale);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_opacity'), this.plyPreview.opacity);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_brightness'), this.plyPreview.brightness);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_depthScale'), this.plyPreview.depthScale);
+
+        gl.drawArrays(gl.POINTS, 0, this.gaussianBuffers.count);
+        enabledAttributes.forEach(location => gl.disableVertexAttribArray(location));
+        gl.disable(gl.BLEND);
     }
 
     renderShader(shaderName, inputTexture, outputFramebuffer, shaderIntensity = 0.5) {
@@ -2513,12 +3307,21 @@ class ShaderPlayground {
 
     renderOnce() {
         if (!this.image || !this.texture) return;
-        this._renderStack();
+        if (this.gaussianMode && this.gaussianData) {
+            this.renderGaussians();
+        } else {
+            this._renderStack();
+        }
     }
 
     reset() {
         // Reset zoom and pan
         this.resetZoomPan();
+
+        this.clearDepthTexture();
+        this.clearGaussianData();
+        this.setDepthSource('pseudo');
+        this.setSharpStatus('SHARP assets not generated.', 'idle');
 
         // Reset shader parameters to defaults
         this.shaderParams = this.getDefaultShaderParams();

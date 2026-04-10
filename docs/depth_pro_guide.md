@@ -1,121 +1,111 @@
-# Quick Start: Depth Pro + Shader Playground
+# Depth Pro Guide
 
-## 🚀 5-Minute Setup
+Depth Pro support gives the depth-aware shaders a real depth map instead of the
+browser-only pseudo-depth fallback. You can use it manually with generated PNGs
+or through the optional local companion.
 
-### Step 1: Install Depth Pro & Download Model
-Double-click `setup_depth_pro.bat` and wait for:
-- Python packages to install (~1 minute)
-- Model checkpoint to download (~5GB, 2-5 minutes)
+## Setup
 
-**Note:** First-time setup downloads the pretrained model once. Subsequent runs are instant!
+Run the setup script once:
 
-### Step 2: Generate Your First Depth Map
-1. Find a photo you want to enhance
-2. Drag it onto `generate_depth.bat`
-3. Wait ~0.3 seconds (GPU) or ~3 seconds (CPU)
-4. You'll see `yourphoto_depth.png` created next to the original
+```bat
+setup_depth_pro.bat
+```
 
-### Step 3: Try It in the Playground
-1. Open `index.html` in your browser
-2. Click "Upload Image" → select your photo
-3. Click "Upload Depth Map" → select the `_depth.png` file
-4. Add a depth effect (try "Depth of Field" first!)
-5. Toggle "Use MiDAS Depth" ON
-6. Play with the sliders!
+This installs the Python dependencies, creates `checkpoints/`, and downloads the
+Depth Pro checkpoint to:
 
-## 🎨 Recommended Effects to Try
+```text
+checkpoints/depth_pro.pt
+```
 
-### Cinematic Portrait
-1. **Depth of Field**
-   - Focal Depth: 0.3
-   - Bokeh Strength: 15
-   - Creates professional camera blur
+If the download fails, run:
 
-### Atmospheric Landscape
-1. **Atmospheric Fog**
-   - Fog Start: 0.4
-   - Fog Density: 0.7
-   - Adds distance haze
+```bat
+download_model.bat
+```
 
-### 3D Pop-Out
-1. **3D Anaglyph**
-   - Eye Separation: 8
-   - View with red/cyan glasses!
+Depth Pro uses CUDA automatically when the installed PyTorch build can see a GPU.
+Otherwise it falls back to CPU.
 
-### Dramatic Lighting
-1. **Relief Lighting**
-   - Light Angle: 1.5
-   - Bump Strength: 8
-   - Creates 3D-like shadows
+## UI Generation
 
-### Edge Enhancement
-1. **Edge Glow**
-   - Edge Threshold: 0.15
-   - Glow Width: 3
-   - Makes subjects pop
+For the in-UI workflow:
 
-## 🔧 Troubleshooting
+1. Run `start_companion.bat`.
+2. Open `index.html`.
+3. Upload a source image.
+4. Click `Generate Depth Pro`.
 
-**"Model not found" error?**
-→ Run `download_model.bat` to manually download the checkpoint
+The generated `depth_pro.png` is loaded automatically as the current depth map,
+and depth-aware shaders are switched to `Use Depth Map`.
 
-**Download failed?**
-→ Download manually from: https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt
-→ Save to: `checkpoints/depth_pro.pt`
+## Manual Generation
 
-**Effect is backwards?**
-→ Toggle "Invert Depth" ON
+Single image:
 
-**Depth map looks wrong?**
-→ Depth Pro works best with:
-  - Natural photos with clear depth (not flat graphics)
-  - Good lighting
-  - Clear subject/background separation
+```bat
+generate_depth.bat path\to\image.png
+```
 
-**Too slow?**
-→ Make sure you have:
-  - CUDA-compatible GPU
-  - Latest GPU drivers
-  - PyTorch with CUDA support
+Batch folder:
 
-## 💡 Pro Tips
+```bat
+python scripts\depth_pro_generate.py -b path\to\images
+```
 
-1. **Batch Process** - Generate depth for all your photos at once:
-   ```
-   python depth_pro_generate.py -b ./MyPhotos
-   ```
+Manual outputs use the legacy sibling-file style, for example:
 
-2. **Stack Effects** - Combine multiple depth effects:
-   - Atmospheric Fog + Depth of Field = cinematic mood
-   - Edge Glow + Selective Sharpen = enhanced details
-   - Depth Color Grade + Relief Lighting = stylized 3D
+```text
+photo.png
+photo_depth.png
+```
 
-3. **Fine-tune** - Each effect has multiple parameters:
-   - Start with defaults
-   - Adjust one slider at a time
-   - Use "Invert Depth" if needed
+Upload the generated depth image through the `Depth` button in the app.
 
-4. **Export Quality** - Downloads are at original resolution, not canvas size!
+## Generated Asset Cache
 
-## 📊 Depth Pro vs Alternatives
+When generated through the companion, assets are stored under:
 
-| Method | Quality | Speed | Setup |
-|--------|---------|-------|-------|
-| Pseudo-depth | ⭐ | Instant | None |
-| MiDAS | ⭐⭐⭐ | ~1s | Model download |
-| **Depth Pro** | ⭐⭐⭐⭐⭐ | ~0.3s | `pip install` |
+```text
+generated-assets/
+  <asset-id>/
+    manifest.json
+    source.<ext>
+    depth_pro.png
+    depth_pro_raw.npy
+```
 
-Depth Pro wins on:
-- Sharper edges (better glow/shadows)
-- Metric depth (real distances)
-- High resolution (1536px+)
-- Faster inference
+The cache key includes:
 
-## 🎯 Next Steps
+- Source image SHA-256.
+- Depth Pro model id/version.
+- Depth Pro checkpoint SHA-256.
+- Generation settings.
 
-1. Try all the depth effects
-2. Experiment with stacking (Fog + DoF + Glow)
-3. Process your photo library
-4. Share your creations!
+If the same image and model state are used again, the app reuses the existing
+package instead of regenerating.
 
-**Need Help?** Check the main README.md for detailed docs.
+## Recommended Depth Effects
+
+- `Depth of Field`: subject/background separation and bokeh.
+- `Atmospheric Fog`: distance haze and cinematic mood.
+- `3D Anaglyph`: red/cyan stereo offset from depth.
+- `Depth Edge Glow`: outline and rim effects around depth discontinuities.
+- `Selective Sharpen`: focus-aware sharpening.
+- `Depth Shadow`: offset shadows driven by depth.
+
+## Troubleshooting
+
+- If generation says the checkpoint is missing, run `setup_depth_pro.bat` or
+  `download_model.bat`.
+- If generation is slow, confirm CUDA PyTorch is installed and visible to Python.
+- If an effect appears backwards, toggle `Invert Depth`.
+- If a generated map does not seem to affect a shader, make sure the shader's
+  `Use Depth Map` toggle is enabled.
+
+## Known Limits
+
+The current depth shaders work with generated maps, but their parameter ranges
+still need a dedicated refinement pass. Expect future improvements around depth
+gamma, near/far remapping, focal controls, and more consistent effect response.

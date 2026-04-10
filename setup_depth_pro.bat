@@ -30,8 +30,8 @@ echo.
 echo Model location: %cd%\checkpoints\depth_pro.pt
 echo.
 echo Usage:
-echo   Single image:  python depth_pro_generate.py image.jpg
-echo   Batch folder:  python depth_pro_generate.py -b ./images
+echo   Single image:  python scripts\depth_pro_generate.py image.jpg
+echo   Batch folder:  python scripts\depth_pro_generate.py -b ./images
 echo   Drag and drop: Drag image onto generate_depth.bat
 echo.
 echo Depth maps will be saved next to original images with _depth.png suffix

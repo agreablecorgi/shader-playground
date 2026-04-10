@@ -8,4 +8,4 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-python3 depth_pro_generate.py "$@"
+python3 scripts/depth_pro_generate.py "$@"

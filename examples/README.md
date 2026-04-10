@@ -1,35 +1,45 @@
 # Depth Pro Examples
 
-This folder contains example images and their generated depth maps.
+This folder can hold sample images and generated depth maps for quick manual
+testing.
 
-## Quick Test
+## Setup
 
-1. Run setup (one time only):
-   ```
-   cd ..
-   setup_depth_pro.bat
-   ```
+From the repository root:
 
-2. Generate depth for all examples:
-   ```
-   python ../depth_pro_generate.py -b .
-   ```
+```bat
+setup_depth_pro.bat
+```
 
-3. You'll get depth maps like:
-   - `portrait_depth.png`
-   - `landscape_depth.png`
-   - etc.
+## Generate Depth For This Folder
 
-## Using in Shader Playground
+From `examples/`:
 
-1. Open `index.html`
-2. Upload an image (e.g., `portrait.jpg`)
-3. Upload its depth map (`portrait_depth.png`)
-4. Apply depth effects!
+```bat
+python ..\scripts\depth_pro_generate.py -b .
+```
 
-## Tips
+Typical outputs:
 
-- **GPU recommended** - Much faster depth generation
-- **File naming** - Depth maps are auto-named `[filename]_depth.png`
-- **Batch processing** - Process entire folders at once
-- **Quality** - Depth Pro produces sharp, detailed depth maps superior to MiDAS
+```text
+portrait.jpg
+portrait_depth.png
+landscape.jpg
+landscape_depth.png
+```
+
+## Use In The Playground
+
+1. Open `index.html`.
+2. Upload an example image.
+3. Upload its matching `_depth.png`.
+4. Add a depth-aware effect.
+5. Turn on `Use Depth Map`.
+
+## Notes
+
+- CUDA GPU support is strongly recommended for faster generation.
+- Companion-generated assets are stored in `generated-assets/`; this folder is
+  for simple manual examples.
+- Depth Pro usually works best on natural images with clear foreground and
+  background separation.

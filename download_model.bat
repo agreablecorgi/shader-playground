@@ -20,6 +20,6 @@ python -c "import urllib.request; import sys; url='https://ml-site.cdn-apple.com
 echo.
 echo Model saved to: %cd%\checkpoints\depth_pro.pt
 echo.
-echo You can now run: python depth_pro_generate.py image.jpg
+echo You can now run: python scripts\depth_pro_generate.py image.jpg
 echo.
 pause

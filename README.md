@@ -1,64 +1,84 @@
-# 🎨 Shader Playground (v2.0)
+# Shader Playground
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![WebGL 1.0](https://img.shields.io/badge/WebGL-1.0-blue.svg)](https://www.khronos.org/webgl/)
+A vanilla WebGL image-effects playground for building stackable shader looks in
+the browser. The core app stays static and lightweight, while optional local
+Python helpers can generate Depth Pro maps and SHARP 3DGS assets on Windows.
 
-A beautiful, high-performance WebGL shader playground for applying real-time, stackable effects to images. Build professional visual stacks with 50+ high-fidelity shaders including Halftone, Glitch, VHS, and Film Grain.
+## What Is Included
 
-![Main Interface](docs/assets/main_interface.png)
+- Layer stack with reorderable effects, blend modes, opacity, and per-shader controls.
+- 50+ realtime WebGL shaders, including film, color, depth, signal, artistic, and paper effects.
+- Procedural Paper Texture shader with paper and medium presets.
+- Manual depth/normal uploads for advanced depth-aware effects.
+- Optional local companion for in-UI Apple Depth Pro and SHARP generation.
+- SHARP `.ply` upload/generation support with a front-aligned PLY preview.
+- Static frontend: open `index.html` directly in a modern browser.
 
-## 🌟 Key Features
-- **Pro-App UI**: Reorderable layers with per-shader blend modes and opacity.
-- **3D Gaussian Splatting**: Direct integration with Apple SHARP for geometric 3D visualization.
-- **Professional Depth**: Native support for **Apple Depth Pro** and **MiDAS** maps.
-- **Gradient Mapping**: Custom multi-stop gradient editor for cinematic toning.
-- **Zero Dependencies**: Pure Vanilla WebGL (60fps on modern GPUs).
+## Quick Start
 
----
+1. Open `index.html`.
+2. Upload a source image.
+3. Pick effects from the bottom tabs.
+4. Select layers in the stack to adjust controls.
+5. Export the result as PNG or JPG.
 
-## 🚀 Getting Started
-1. **Open** `index.html` in any modern web browser.
-2. **Upload** a main image to the center canvas.
-3. **Explore** effects from the categorized tabs at the bottom.
-4. **Refine** your creation using the contextual controls in the right panel.
-5. **Export** as a high-quality PNG.
+## Optional Local Companion
 
----
+The local companion is only needed when you want the UI to generate Depth Pro or
+SHARP assets automatically. Manual upload workflows still work without it.
 
-## 📽️ Documentation & Guides
-| Guide | Description |
-| :--- | :--- |
-| 🎨 [Visual UI Tour](docs/ui_tour.md) | A complete walkthrough of the interface and tools. |
-| 🛠️ [Developer Guide](docs/contributing.md) | How to add your own custom GLSL shaders. |
-| 🎯 [Depth Pro Setup](docs/depth_pro_guide.md) | Generating and using professional depth maps. |
-| 🔮 [SHARP/3D Guide](docs/sharp_guide.md) | Visualizing geometric depth and 3D gaussians. |
+```bat
+setup_depth_pro.bat
+setup_sharp.bat
+start_companion.bat
+```
 
----
+After the companion is running:
 
-## 🎯 Advanced Integration (Optional)
+1. Open `index.html`.
+2. Upload an image.
+3. Click `Generate Depth Pro` to create and auto-load a depth map.
+4. Click `Generate SHARP` to create/cache official SHARP `.ply` assets.
 
-### Depth Pro
-To use advanced depth effects (Fog, Bokeh, Anaglyph):
-1. Run `setup_depth_pro.bat`.
-2. Drag your image onto `generate_depth.bat`.
-3. Upload `_depth.png` into the **Depth** slot.
+Generated assets are written to `generated-assets/`, which is ignored by Git.
+Each asset package is keyed by the source image hash and includes a manifest so
+Depth Pro and SHARP outputs can be reused unless the model/checkpoint/settings
+change.
 
-### SHARP (3D Gaussians)
-For surface normal lighting and 3D reconstruction:
-1. Run `setup_sharp.bat`.
-2. Drag your image onto `generate_sharp.bat`.
-3. Upload the `_gaussians.json` and `_normals.png` files.
+## Documentation
 
----
+| Guide | Purpose |
+| --- | --- |
+| [UI Tour](docs/ui_tour.md) | Interface walkthrough and where major tools live. |
+| [Developer Guide](docs/contributing.md) | How to add shaders, controls, docs, and helper scripts. |
+| [Depth Pro Guide](docs/depth_pro_guide.md) | Depth Pro setup, manual generation, UI generation, and cache behavior. |
+| [Local Companion](docs/local_companion.md) | Companion endpoints, generated package layout, and troubleshooting. |
+| [SHARP Guide](docs/sharp_guide.md) | SHARP setup, official CLI flow, cache behavior, and PLY preview limits. |
 
-## 🛠️ Technical Specs
-- **Engine**: Pure Vanilla WebGL 1.0.
-- **Rendering**: Multi-pass compositing with ping-pong framebuffers.
-- **Precision**: 32-bit float support for high-fidelity gradients.
-- **Performance**: Hardware-accelerated for 100+ simultaneous layers.
+## Project Layout
 
----
+```text
+.
+  index.html              Static app shell
+  app.js                  UI, WebGL pipeline, asset loading, controls
+  shaders.js              Fragment shader registry
+  styles.css              Application styling
+  scripts/                Python helper scripts and local companion
+  docs/                   User and developer documentation
+  generated-assets/       Ignored local Depth Pro / SHARP output packages
+  checkpoints/            Ignored local model checkpoints
+```
 
-## 📜 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Current 3D/Depth Status
 
+Depth Pro is usable today for the depth shader stack. Generated depth maps are
+auto-loaded into shaders that expose `Use Depth Map`.
+
+SHARP generation now uses Apple's official `sharp predict` CLI and outputs
+official 3DGS `.ply` files. The app can upload or generate those PLY files and
+display a lightweight front-aligned point-splat preview. Full 3DGS rendering and
+SHARP-derived depth/normal extraction are planned as a later refinement pass.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

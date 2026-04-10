@@ -12,7 +12,7 @@ if "%~1"=="" (
     exit /b
 )
 
-python depth_pro_generate.py %*
+python scripts\depth_pro_generate.py %*
 
 echo.
 pause

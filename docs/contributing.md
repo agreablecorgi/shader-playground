@@ -1,75 +1,104 @@
-# 🛠️ Contributing: Adding New Shaders
+# Developer Guide
 
-Want to add a custom effect to the Shader Playground? This guide explains how to register a new fragment shader and expose its controls to the UI.
+This project is intentionally small: a static WebGL frontend plus optional local
+Python scripts for heavyweight model inference.
 
-## 1. Create the Fragment Shader
-Add your shader code to `shaders.js`. 
+## Main Files
 
-- Use `u_image` (sampler2D) for the input texture.
-- Use `v_texCoord` (vec2) for UV coordinates.
-- Use `u_intensity` (float, 0.0–1.0) for the global blend amount.
-- **Example**:
+```text
+index.html      UI structure and effect buttons
+styles.css      App styling
+app.js          App state, controls, asset loading, render pipeline
+shaders.js      Fragment shader registry
+scripts/        Python helper scripts and companion service
+docs/           Documentation
+```
+
+Keep root scripts as thin launchers. Implementation Python should live under
+`scripts/`.
+
+## Add A Shader
+
+1. Add default parameters in `getDefaultShaderParams()` in `app.js`.
+2. Add controls in `showShaderControls(shaderName)` in `app.js`.
+3. Add a button in the correct picker panel in `index.html`.
+4. Add the GLSL fragment shader in `shaders.js`.
+5. Run `node --check app.js` and `node --check shaders.js`.
+6. Update docs if the shader introduces a new workflow or asset requirement.
+
+## Shader Contract
+
+Fragment shaders usually receive:
+
 ```glsl
-// shaders.js
-fragmentShaders['my_custom_effect'] = `
-    precision mediump float;
-    varying vec2 v_texCoord;
-    uniform sampler2D u_image;
-    uniform float u_intensity;
-    uniform float u_myParam;
-
-    void main() {
-        vec4 color = texture2D(u_image, v_texCoord);
-        // Apply effect logic...
-        gl_FragColor = mix(color, vec4(color.rgb * u_myParam, 1.0), u_intensity);
-    }
-`;
+uniform sampler2D u_image;
+uniform float u_intensity;
+uniform vec2 u_resolution;
+varying vec2 v_texCoord;
 ```
 
----
+Depth-aware shaders may also receive:
 
-## 2. Register UI Controls
-In `app.js`, find the `showShaderControls(shaderName)` method and add your shader's parameters to the `controls` object.
+```glsl
+uniform sampler2D u_depthTexture;
+uniform float u_useDepthTexture;
+uniform float u_invertDepth;
+```
 
-- **Supported Types**: 'range' (slider), 'toggle' (checkbox), 'tabs' (buttons).
-- **Example**:
+Normal-aware shaders may receive:
+
+```glsl
+uniform sampler2D u_normalTexture;
+uniform float u_useNormalTexture;
+```
+
+Use the shared naming convention where control names in `app.js` map to GLSL
+uniforms with a `u_` prefix.
+
+## Control Patterns
+
+Use `intensity` as the per-shader blend control when possible:
+
 ```javascript
-// app.js (showShaderControls)
-my_custom_effect: [
-    { name: 'intensity', label: 'Blend', min: 0, max: 1, step: 0.01, default: 0.5, isPerShader: true },
-    { name: 'myParam',   label: 'Glow Size', min: 0, max: 10, step: 0.5, default: 2.0 }
-],
+{ name: 'intensity', label: 'Blend', min: 0, max: 1, step: 0.01, default: 1.0, isPerShader: true }
 ```
 
----
+Supported control styles include:
 
-## 3. Register the Default Parameters
-Add the default values for your shader's parameters in `getDefaultShaderParams()`.
+- Sliders with `min`, `max`, `step`, and `default`.
+- Toggles with `type: 'toggle'`.
+- Tabs with `type: 'tabs'`.
+- Dropdowns with `type: 'dropdown'`.
+- Color arrays with three normalized RGB values.
 
-- **Example**:
-```javascript
-// app.js (getDefaultShaderParams)
-my_custom_effect: {
-    myParam: 2.0
-},
+## Depth And SHARP Assets
+
+Manual depth/normal upload should keep working even when the companion is not
+running.
+
+Companion-generated assets are stored under `generated-assets/` and keyed by the
+source image SHA-256. Keep cache metadata in `manifest.json` so generated assets
+can be reused safely when the source image and model state match.
+
+SHARP uses official `.ply` files now. Do not reintroduce custom Gaussian JSON as
+the primary format. If a future renderer needs derived data, create it from the
+official PLY package.
+
+## Paper Texture Shader Notes
+
+The Paper Texture shader is fully procedural. It exposes paper presets and
+medium presets through numeric dropdown indices. Keep future paper/medium
+extensions procedural unless the project intentionally adds texture assets.
+
+## Verification Checklist
+
+Before committing:
+
+```bat
+node --check app.js
+node --check shaders.js
+python -m py_compile scripts\shader_companion.py scripts\depth_pro_generate.py scripts\check_sharp_cli.py
 ```
 
----
-
-## 4. Add to the Effect Picker
-Finally, add a button for your shader in `index.html` within the appropriate `.ppanel`.
-
-- **Example**:
-```html
-<!-- index.html -->
-<div class="ppanel" id="ptab-filters">
-    <button class="effect-btn" data-shader="my_custom_effect">My Effect</button>
-</div>
-```
-
-## Tips for High Performance
-1. **Minimize Texture Lookups**: Prefer math over multiple `texture2D` calls where possible.
-2. **Use the Stack**: Instead of one massive "Super Shader", break it into small, independent shaders that can be stacked.
-3. **Precision**: Use `mediump` for color math and `highp` for coordinate-sensitive logic.
-
-Happy shading! 🚀
+If you change setup or generation scripts, also smoke-test `start_companion.bat`
+or the relevant endpoint when practical.

@@ -6,6 +6,7 @@ checkpoints/
 # Generated depth maps
 *_depth.png
 *_depth.jpg
+generated-assets/
 
 # SHARP generated files
 *_gaussians.json

@@ -10,9 +10,11 @@ import torch
 from PIL import Image
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[1]
+
 def download_model_if_needed():
     """Download Depth Pro model if not present"""
-    checkpoint_path = Path("checkpoints/depth_pro.pt")
+    checkpoint_path = ROOT / "checkpoints" / "depth_pro.pt"
     
     if checkpoint_path.exists():
         return
@@ -60,7 +62,7 @@ def setup_depth_pro():
         precision=torch.float32
     )
     
-    checkpoint_path = Path("checkpoints/depth_pro.pt")
+    checkpoint_path = ROOT / "checkpoints" / "depth_pro.pt"
     if checkpoint_path.exists():
         state_dict = torch.load(str(checkpoint_path), map_location="cpu")
         model.load_state_dict(state_dict)
