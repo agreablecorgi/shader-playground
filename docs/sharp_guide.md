@@ -76,17 +76,28 @@ asset.
 
 You can also upload an existing `.ply` with the `PLY` button.
 
-The current preview:
+The current preview and map workflow:
 
 - Parses ASCII and binary little-endian PLY files.
 - Supports standard RGB fields and official 3DGS fields like `f_dc_0`,
   `opacity`, and `scale_0`.
 - Opens in a front-aligned image overlay by default.
-- Provides `Front`, `Orbit`, `Reset`, size, opacity, density, and depth controls.
+- Provides `Front`, `Orbit`, `Reset`, `Viewer Quality`, size, opacity, density,
+  and depth controls.
 - Uses a lightweight WebGL point-splat renderer for usability.
+- Derives separate 3DGS depth and normal textures for the 2D shader stack.
+- Uses `Map Quality` to control the offscreen extraction density and denoising
+  pass count independently from the visible viewer density.
+- Uses `Depth Guide` to let a loaded Depth Pro or manual depth map preserve
+  silhouettes during 3DGS map filtering. `Depth Pro Edges` is conservative;
+  `Edges + Fill` and `Strong Fusion` let the depth guide fill sparse areas more
+  aggressively.
+- Auto-enables the derived maps after generation or upload; use `Use 3DGS Maps`
+  to turn them off or back on.
 
 This preview is not a physically correct full 3DGS renderer yet. It is a bridge
-that makes official PLY assets visible and inspectable inside the app.
+that makes official PLY assets visible, inspectable, and useful for depth-aware
+image effects inside the app.
 
 ## Troubleshooting
 
@@ -104,5 +115,5 @@ that makes official PLY assets visible and inspectable inside the app.
 The app still needs:
 
 - Full 3DGS rendering instead of point-splat preview.
-- SHARP-derived depth and normal extraction.
-- Tighter depth/splat shader controls once SHARP-derived maps are available.
+- Optional higher-precision browser targets for even smoother derived depth maps
+  where WebGL support allows it.

@@ -97,5 +97,6 @@ Root `.bat` and `.sh` files are intentionally thin launchers.
 
 The companion currently supports Windows-local workflows first. Depth Pro maps
 are immediately useful in the shader stack. SHARP PLY files can be generated,
-cached, uploaded, and previewed, but full 3DGS rendering and SHARP-derived
-depth/normal extraction are planned for a later pass.
+cached, uploaded, previewed, and converted in-browser into 3DGS-derived depth
+and normal maps for the 2D shader stack. Full physically correct 3DGS rendering
+is still planned for a later pass.

@@ -743,13 +743,23 @@ body {
 .asset-status[data-state="working"] { color: var(--accent-bg); }
 .asset-status[data-state="error"] { color: var(--danger); }
 
+.upload-asset-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.upload-asset-row .f-btn {
+  flex: 1;
+  justify-content: center;
+}
+
 .ply-preview-controls {
   display: grid;
   gap: 8px;
   padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-2) 74%, transparent);
+  border: 1px solid var(--stroke-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
 }
 
 .ply-preview-controls[hidden] {
@@ -768,6 +778,28 @@ body {
   background: color-mix(in srgb, var(--accent-bg) 18%, transparent);
 }
 
+.ply-map-toggle {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.ply-select {
+  display: grid;
+  grid-template-columns: 102px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+}
+
+.ply-select select {
+  width: 100%;
+}
+
 .ply-slider {
   display: grid;
   grid-template-columns: 52px 1fr;
@@ -779,6 +811,12 @@ body {
 
 .ply-slider input {
   width: 100%;
+}
+
+.gaussian-viewer-btn.active {
+  background: color-mix(in srgb, var(--accent-bg) 22%, transparent);
+  border-color: var(--accent-bg);
+  color: var(--brand);
 }
 
 /* ── FORM CONTROLS ────────────────────────────────────────────── */

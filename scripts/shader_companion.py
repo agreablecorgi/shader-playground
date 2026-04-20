@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import threading
 import traceback
 import urllib.parse
 from datetime import datetime, timezone
@@ -45,6 +46,18 @@ SHARP_SETTINGS = {
     "output": "3dgs-ply",
 }
 _FILE_HASH_CACHE = {}
+_WRITE_LOCKS: dict[str, threading.Lock] = {}
+_WRITE_LOCKS_GUARD = threading.Lock()
+
+
+def write_lock_for(path: Path) -> threading.Lock:
+    key = str(path.resolve()).lower()
+    with _WRITE_LOCKS_GUARD:
+        lock = _WRITE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _WRITE_LOCKS[key] = lock
+        return lock
 
 
 def utc_now() -> str:
@@ -195,9 +208,46 @@ def cache_entry_is_valid(entry: dict[str, Any], cache_key: dict[str, Any], requi
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    with write_lock_for(path):
+        _atomic_write_json_unlocked(path, payload)
+
+
+def _atomic_write_json_unlocked(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    if path.name == "manifest.json" and path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            for section in ("depth_pro", "sharp"):
+                existing_entry = existing.get(section)
+                payload_entry = payload.get(section)
+                if existing_entry and not payload_entry:
+                    payload[section] = existing_entry
+                elif (
+                    isinstance(existing_entry, dict)
+                    and isinstance(payload_entry, dict)
+                    and existing_entry.get("status") == "ready"
+                    and payload_entry.get("status") == "not_generated"
+                ):
+                    payload[section] = existing_entry
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    try:
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except FileNotFoundError:
+        # A Windows file watcher or overlapping legacy write can occasionally
+        # remove the temp file before replace. Rewrite with a fresh unique name.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.retry.tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def load_manifest(package_dir: Path) -> Optional[dict[str, Any]]:

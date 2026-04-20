@@ -76,8 +76,12 @@ auto-loaded into shaders that expose `Use Depth Map`.
 
 SHARP generation now uses Apple's official `sharp predict` CLI and outputs
 official 3DGS `.ply` files. The app can upload or generate those PLY files and
-display a lightweight front-aligned point-splat preview. Full 3DGS rendering and
-SHARP-derived depth/normal extraction are planned as a later refinement pass.
+display a lightweight point-splat preview with selectable viewer quality.
+Loaded PLY assets also derive source-aligned 3DGS depth and normal maps for the
+2D shader stack, with separate map quality presets for denoised extraction. A
+loaded Depth Pro or manual depth map can guide 3DGS filtering so silhouettes stay
+cleaner around subjects. Full physically correct 3DGS rendering remains a later
+refinement pass.
 
 ## License
 

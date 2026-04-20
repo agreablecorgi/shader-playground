@@ -30,13 +30,13 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        
+
         uniform float u_mode;      // 0: Dot, 1: Line, 2: Square, 3: Cross
         uniform float u_cellSize;
         uniform float u_rotation;
         uniform float u_softness;
         uniform float u_contrast;
-        
+
         varying vec2 v_texCoord;
 
         mat2 rotate2d(float angle) {
@@ -45,28 +45,28 @@ const fragmentShaders = {
 
         void main() {
             vec2 pixelCoord = v_texCoord * u_resolution;
-            
+
             // Rotate the grid
             float rad = u_rotation * 0.0174533; // deg to rad
             vec2 rotatedCoord = rotate2d(rad) * pixelCoord;
-            
+
             // Cell calculation
             vec2 cellIdx = floor(rotatedCoord / u_cellSize);
             vec2 cellPos = fract(rotatedCoord / u_cellSize) - 0.5;
-            
+
             // Sample image at cell center (un-rotate)
             vec2 samplePos = (rotate2d(-rad) * (cellIdx + 0.5) * u_cellSize) / u_resolution;
             samplePos = clamp(samplePos, 0.0, 1.0);
-            
+
             vec4 color = texture2D(u_image, samplePos);
             float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-            
+
             // Tonal mapping
             luma = clamp((luma - 0.5) * (1.0 + u_contrast) + 0.5, 0.0, 1.0);
-            
+
             float pattern = 0.0;
             float radius = (1.0 - luma) * 0.75;
-            
+
             if (u_mode < 0.5) { // Dot (Circle)
                 float dist = length(cellPos);
                 pattern = smoothstep(radius + u_softness, radius - u_softness, dist);
@@ -80,7 +80,7 @@ const fragmentShaders = {
                 float dist = min(abs(cellPos.x), abs(cellPos.y));
                 pattern = smoothstep(radius + u_softness, radius - u_softness, dist);
             }
-            
+
             vec3 result = mix(vec3(1.0), vec3(0.0), pattern);
             vec4 original = texture2D(u_image, v_texCoord);
             gl_FragColor = vec4(mix(original.rgb, result, u_intensity), original.a);
@@ -96,7 +96,7 @@ const fragmentShaders = {
         varying vec2 v_texCoord;
 
         // CMYK Halftone - proper implementation with overlapping dots
-        
+
         const vec3 CYAN = vec3(0.0, 0.7, 1.0);
         const vec3 MAGENTA = vec3(0.99, 0.31, 0.62);
         const vec3 YELLOW = vec3(1.0, 0.85, 0.0);
@@ -121,21 +121,21 @@ const fragmentShaders = {
         vec4 rgbToCmyk(vec3 rgb) {
             // Enhanced CMYK conversion with UCR (Under Color Removal)
             float k = 1.0 - max(max(rgb.r, rgb.g), rgb.b);
-            
+
             if (k >= 0.999) return vec4(0.0, 0.0, 0.0, 1.0);
-            
+
             float invK = 1.0 / (1.0 - k);
             vec3 cmy = vec3(
                 (1.0 - rgb.r - k) * invK,
                 (1.0 - rgb.g - k) * invK,
                 (1.0 - rgb.b - k) * invK
             );
-            
+
             // UCR - replace common CMY with K for deeper blacks
             float ucr = min(min(cmy.r, cmy.g), cmy.b) * 0.5;
             cmy -= ucr;
             k += ucr;
-            
+
             return vec4(cmy, k);
         }
 
@@ -144,89 +144,89 @@ const fragmentShaders = {
             // Rotate coordinates
             mat2 rot = rotation(angle);
             vec2 rotated = rot * pixelCoord;
-            
+
             // Find current cell
             vec2 cellPos = floor(rotated / cellSize);
-            
+
             float maxDot = 0.0;
-            
+
             // Check 3x3 neighborhood for overlapping dots (9 cells)
             for (float dy = -1.0; dy <= 1.0; dy++) {
                 for (float dx = -1.0; dx <= 1.0; dx++) {
                     vec2 neighborCell = cellPos + vec2(dx, dy);
-                    
+
                     // Grid noise - random offset for this cell
                     float noiseAmount = u_intensity * 0.2;
                     vec2 cellJitter = vec2(
                         random(neighborCell) - 0.5,
                         random(neighborCell + vec2(123.45, 67.89)) - 0.5
                     ) * noiseAmount * cellSize;
-                    
+
                     // Dot center in rotated space
                     vec2 dotCenter = (neighborCell + 0.5) * cellSize + cellJitter;
-                    
+
                     // Sample image at dot center (rotate back to original space)
                     vec2 samplePos = (rotation(-angle) * dotCenter) / u_resolution;
                     samplePos = clamp(samplePos, 0.0, 1.0);
                     vec3 rgb = texture2D(u_image, samplePos).rgb;
                     vec4 cmyk = rgbToCmyk(rgb);
-                    
+
                     // Get value for this channel
                     float channelValue;
                     if (channel == 0) channelValue = cmyk.r;      // Cyan
                     else if (channel == 1) channelValue = cmyk.g; // Magenta
                     else if (channel == 2) channelValue = cmyk.b; // Yellow
                     else channelValue = cmyk.a;                   // Black
-                    
+
                     // Distance from pixel to dot center
                     float dist = length(rotated - dotCenter);
-                    
+
                     // Dot radius (allow dots to grow up to 1.5x cell size for overlap)
                     float maxRadius = cellSize * 0.8;
                     float radius = maxRadius * sqrt(channelValue); // sqrt for better dot growth
-                    
+
                     // Soft edge
                     float softness = cellSize * 0.12;
                     float dot = 1.0 - smoothstep(radius - softness, radius + softness, dist);
-                    
+
                     maxDot = max(maxDot, dot);
                 }
             }
-            
+
             return maxDot;
         }
 
         void main() {
             // Cell size controlled by intensity
             float cellSize = 5.0 + u_intensity * 10.0;
-            
+
             vec2 pixelCoord = v_texCoord * u_resolution;
-            
+
             // Calculate dot presence for each channel
             float cDot = getHalftoneDot(pixelCoord, ANGLE_C, 0, cellSize);
             float mDot = getHalftoneDot(pixelCoord, ANGLE_M, 1, cellSize);
             float yDot = getHalftoneDot(pixelCoord, ANGLE_Y, 2, cellSize);
             float kDot = getHalftoneDot(pixelCoord, ANGLE_K, 3, cellSize);
-            
+
             // Start with paper white
             vec3 result = PAPER;
-            
+
             // Apply inks with proper subtractive color mixing
             // Each ink layer absorbs certain wavelengths
             vec3 cLayer = vec3(1.0 - CYAN.r, 1.0 - CYAN.g, 1.0 - CYAN.b);
             vec3 mLayer = vec3(1.0 - MAGENTA.r, 1.0 - MAGENTA.g, 1.0 - MAGENTA.b);
             vec3 yLayer = vec3(1.0 - YELLOW.r, 1.0 - YELLOW.g, 1.0 - YELLOW.b);
             vec3 kLayer = vec3(1.0 - BLACK.r, 1.0 - BLACK.g, 1.0 - BLACK.b);
-            
+
             // Multiply by absorption (1.0 = no absorption, 0.0 = full absorption)
             result *= mix(vec3(1.0), cLayer, cDot * 0.9);
             result *= mix(vec3(1.0), mLayer, mDot * 0.9);
             result *= mix(vec3(1.0), yLayer, yDot * 0.9);
             result *= mix(vec3(1.0), kLayer, kDot * 0.95);
-            
+
             // Slight contrast boost for punchier blacks
             result = pow(result, vec3(0.95));
-            
+
             gl_FragColor = vec4(result, 1.0);
         }
     `,
@@ -391,7 +391,7 @@ const fragmentShaders = {
             int x = int(mod(position.x, 4.0));
             int y = int(mod(position.y, 4.0));
             int index = x + y * 4;
-            
+
             if (index == 0) return 0.0625;
             if (index == 1) return 0.5625;
             if (index == 2) return 0.1875;
@@ -414,7 +414,7 @@ const fragmentShaders = {
             int x = int(mod(position.x, 8.0));
             int y = int(mod(position.y, 8.0));
             int index = x + y * 8;
-            
+
             // Row 0
             if (index == 0) return 0.015625;
             if (index == 1) return 0.515625;
@@ -424,7 +424,7 @@ const fragmentShaders = {
             if (index == 5) return 0.265625;
             if (index == 6) return 0.890625;
             if (index == 7) return 0.390625;
-            
+
             // Row 1
             if (index == 8) return 0.203125;
             if (index == 9) return 0.703125;
@@ -434,7 +434,7 @@ const fragmentShaders = {
             if (index == 13) return 0.453125;
             if (index == 14) return 0.828125;
             if (index == 15) return 0.328125;
-            
+
             // Row 2
             if (index == 16) return 0.046875;
             if (index == 17) return 0.546875;
@@ -444,7 +444,7 @@ const fragmentShaders = {
             if (index == 21) return 0.296875;
             if (index == 22) return 0.921875;
             if (index == 23) return 0.421875;
-            
+
             // Row 3
             if (index == 24) return 0.234375;
             if (index == 25) return 0.734375;
@@ -454,7 +454,7 @@ const fragmentShaders = {
             if (index == 29) return 0.484375;
             if (index == 30) return 0.859375;
             if (index == 31) return 0.359375;
-            
+
             // Row 4
             if (index == 32) return 0.750000;
             if (index == 33) return 0.250000;
@@ -464,7 +464,7 @@ const fragmentShaders = {
             if (index == 37) return 0.500000;
             if (index == 38) return 0.125000;
             if (index == 39) return 0.625000;
-            
+
             // Row 5
             if (index == 40) return 0.937500;
             if (index == 41) return 0.437500;
@@ -474,7 +474,7 @@ const fragmentShaders = {
             if (index == 45) return 0.687500;
             if (index == 46) return 0.062500;
             if (index == 47) return 0.562500;
-            
+
             // Row 6
             if (index == 48) return 0.781250;
             if (index == 49) return 0.281250;
@@ -484,7 +484,7 @@ const fragmentShaders = {
             if (index == 53) return 0.531250;
             if (index == 54) return 0.156250;
             if (index == 55) return 0.656250;
-            
+
             // Row 7
             if (index == 56) return 0.968750;
             if (index == 57) return 0.468750;
@@ -502,20 +502,20 @@ const fragmentShaders = {
 
         vec3 errorDiffusion(vec3 color, vec2 uv, float levels, int method) {
             vec2 pixelSize = 1.0 / u_resolution;
-            
+
             // Quantize current pixel
             vec3 quantized = quantizeColor(color, levels);
             vec3 error = color - quantized;
-            
+
             // Sample neighbors and estimate their contribution
             // This approximates error diffusion by looking at what neighbors would contribute
             vec3 rightColor = texture2D(u_image, uv + vec2(pixelSize.x, 0.0)).rgb;
             vec3 downLeftColor = texture2D(u_image, uv + vec2(-pixelSize.x, pixelSize.y)).rgb;
             vec3 downColor = texture2D(u_image, uv + vec2(0.0, pixelSize.y)).rgb;
             vec3 downRightColor = texture2D(u_image, uv + vec2(pixelSize.x, pixelSize.y)).rgb;
-            
+
             vec3 accumulated = quantized;
-            
+
             if (method == 5) {
                 // Floyd-Steinberg: distributes error to 4 neighbors
                 // Current pixel gets errors from top-left neighbors
@@ -523,45 +523,45 @@ const fragmentShaders = {
                 vec3 upRightColor = texture2D(u_image, uv + vec2(pixelSize.x, -pixelSize.y)).rgb;
                 vec3 upColor = texture2D(u_image, uv + vec2(0.0, -pixelSize.y)).rgb;
                 vec3 upLeftColor = texture2D(u_image, uv + vec2(-pixelSize.x, -pixelSize.y)).rgb;
-                
+
                 vec3 leftError = (leftColor - quantizeColor(leftColor, levels)) * 7.0/16.0;
                 vec3 upLeftError = (upLeftColor - quantizeColor(upLeftColor, levels)) * 3.0/16.0;
                 vec3 upError = (upColor - quantizeColor(upColor, levels)) * 5.0/16.0;
                 vec3 upRightError = (upRightColor - quantizeColor(upRightColor, levels)) * 1.0/16.0;
-                
+
                 accumulated = quantizeColor(color + leftError + upLeftError + upError + upRightError, levels);
             } else if (method == 6) {
                 // Atkinson: lighter dithering, used by Apple
                 vec3 leftColor = texture2D(u_image, uv + vec2(-pixelSize.x, 0.0)).rgb;
                 vec3 upColor = texture2D(u_image, uv + vec2(0.0, -pixelSize.y)).rgb;
-                
+
                 vec3 leftError = (leftColor - quantizeColor(leftColor, levels)) * 0.125;
                 vec3 upError = (upColor - quantizeColor(upColor, levels)) * 0.125;
-                
+
                 accumulated = quantizeColor(color + leftError + upError, levels);
             } else if (method == 7) {
                 // Sierra Lite: simplified Sierra, good quality
                 vec3 leftColor = texture2D(u_image, uv + vec2(-pixelSize.x, 0.0)).rgb;
                 vec3 upColor = texture2D(u_image, uv + vec2(0.0, -pixelSize.y)).rgb;
-                
+
                 vec3 leftError = (leftColor - quantizeColor(leftColor, levels)) * 0.5;
                 vec3 upError = (upColor - quantizeColor(upColor, levels)) * 0.25;
-                
+
                 accumulated = quantizeColor(color + leftError + upError, levels);
             }
-            
+
             return accumulated;
         }
 
         void main() {
             vec3 color = texture2D(u_image, v_texCoord).rgb;
             vec2 pos = v_texCoord * u_resolution;
-            
+
             float threshold = 0.5;
             int algo = int(u_algorithm);
-            
+
             vec3 result;
-            
+
             // Error diffusion algorithms (5-7)
             if (algo >= 5) {
                 if (u_colorLevels > 2.5) {
@@ -587,7 +587,7 @@ const fragmentShaders = {
                     float r2 = hash(pos + vec2(1.5, 2.3));
                     threshold = fract(r1 + r2 * 0.618034);
                 }
-                
+
                 if (u_colorLevels > 2.5) {
                     vec3 quantized = quantizeColor(color, u_colorLevels);
                     vec3 error = color - quantized;
@@ -598,7 +598,7 @@ const fragmentShaders = {
                     result = vec3(dithered);
                 }
             }
-            
+
             gl_FragColor = vec4(mix(color, result, u_intensity), 1.0);
         }
     `,
@@ -812,11 +812,11 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        
+
         uniform float u_pixelSize;
         uniform float u_pixelShape; // 0: Square, 1: Hex
         uniform float u_sharpness;
-        
+
         varying vec2 v_texCoord;
 
         // Hexagonal grid calculation
@@ -837,7 +837,7 @@ const fragmentShaders = {
             if (u_pixelShape < 0.5) { // Square
                 vec2 coord = floor(uv * u_resolution / size) * size / u_resolution;
                 color = texture2D(u_image, coord).rgb;
-                
+
                 // Add sharpness/bevel effect
                 vec2 g = fract(uv * u_resolution / size);
                 float border = min(min(g.x, 1.0-g.x), min(g.y, 1.0-g.y));
@@ -850,9 +850,9 @@ const fragmentShaders = {
                 vec2 a = mod(uv * u_resolution, r) - h;
                 vec2 b = mod(uv * u_resolution - h, r) - h;
                 vec2 hexCenter = dot(a, a) < dot(b, b) ? (uv * u_resolution - a) : (uv * u_resolution - b);
-                
+
                 color = texture2D(u_image, hexCenter / u_resolution).rgb;
-                
+
                 float dist = dot(a, a) < dot(b, b) ? length(a) : length(b);
                 float radius = size * 0.4;
                 float edge = smoothstep(radius, radius * (1.0 - 0.2 * (1.0 - u_sharpness)), dist);
@@ -876,7 +876,7 @@ const fragmentShaders = {
             float wave2 = sin(uv.y * 15.0 + u_time * 1.5) * 0.01;
             uv.y += wave1 * u_intensity;
             uv.x += wave2 * u_intensity;
-            
+
             gl_FragColor = texture2D(u_image, uv);
         }
     `,
@@ -887,18 +887,18 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        
+
         uniform float u_blockScale;
         uniform float u_colorInversion;
         uniform float u_evolution;
         uniform float u_timeMode; // 0: Auto (Time), 1: Manual (Evolution)
-        
+
         varying vec2 v_texCoord;
 
         float random(vec2 st) {
             return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
         }
-        
+
         float blockNoise(vec2 uv, float seed) {
             return random(floor(uv) + seed);
         }
@@ -906,17 +906,17 @@ const fragmentShaders = {
         void main() {
             float t = (u_timeMode < 0.5) ? u_time : u_evolution;
             vec2 uv = v_texCoord;
-            
+
             // Blocky displacement
             float blockResolution = 32.0 / (1.0 + u_blockScale);
             vec2 blockUV = floor(uv * blockResolution);
             float noise = random(blockUV + floor(t * 12.0));
-            
+
             vec2 offset = vec2(0.0);
             if (noise > 0.9 - u_intensity * 0.4) {
                 offset.x = (random(vec2(blockUV.y, t)) - 0.5) * u_intensity * 0.2;
             }
-            
+
             // Scanline jitter
             float jitter = random(vec2(t, uv.y * 100.0)) * 2.0 - 1.0;
             float jitterThreshold = 1.0 - u_intensity * 0.1;
@@ -929,13 +929,13 @@ const fragmentShaders = {
             float g = texture2D(u_image, uv + offset).g;
             float b = texture2D(u_image, uv + offset - vec2(0.01 * u_intensity, 0.0)).b;
             vec3 color = vec3(r, g, b);
-            
+
             // Random color inversion
             float invNoise = random(vec2(floor(t * 4.0), blockUV.y));
             if (invNoise > 1.0 - u_colorInversion * u_intensity * 0.5) {
                 color = 1.0 - color;
             }
-            
+
             // Pixel noise (static)
             float staticNoise = random(uv + t) * 0.1 * u_intensity;
             color += staticNoise;
@@ -1021,7 +1021,7 @@ const fragmentShaders = {
             float r = texture2D(u_image, v_texCoord + offset).r;
             float g = texture2D(u_image, v_texCoord).g;
             float b = texture2D(u_image, v_texCoord - offset).b;
-            
+
             gl_FragColor = vec4(r, g, b, 1.0);
         }
     `,
@@ -1032,7 +1032,7 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         varying vec2 v_texCoord;
-        
+
         uniform vec3 u_color1;
         uniform vec3 u_color2;
         uniform float u_contrast;
@@ -1040,12 +1040,12 @@ const fragmentShaders = {
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-            
+
             // Apply contrast to the grayscale mapping
             gray = clamp((gray - 0.5) * (1.0 + u_contrast) + 0.5, 0.0, 1.0);
-            
+
             vec3 duotone = mix(u_color1, u_color2, gray);
-            
+
             vec3 result = mix(color.rgb, duotone, u_intensity);
             gl_FragColor = vec4(result, color.a);
         }
@@ -1063,7 +1063,7 @@ const fragmentShaders = {
             vec2 uv = v_texCoord - center;
             float dist = length(uv);
             float angle = atan(uv.y, uv.x) + dist * u_intensity * 5.0;
-            
+
             vec2 newUv = vec2(cos(angle), sin(angle)) * dist + center;
             gl_FragColor = texture2D(u_image, newUv);
         }
@@ -1082,7 +1082,7 @@ const fragmentShaders = {
             float dist = length(uv);
             float power = 1.0 + u_intensity * 1.5;
             float newDist = pow(dist, power);
-            
+
             vec2 newUv = normalize(uv) * newDist + center;
             gl_FragColor = texture2D(u_image, newUv);
         }
@@ -1099,7 +1099,7 @@ const fragmentShaders = {
             vec2 uv = v_texCoord;
             uv.x += sin(uv.y * 10.0 + u_time) * 0.05 * u_intensity;
             uv.y += cos(uv.x * 10.0 + u_time) * 0.05 * u_intensity;
-            
+
             gl_FragColor = texture2D(u_image, uv);
         }
     `,
@@ -1120,28 +1120,28 @@ const fragmentShaders = {
         void main() {
             vec2 center = vec2(0.5 + u_offsetX * 0.5, 0.5 + u_offsetY * 0.5);
             vec2 uv = v_texCoord - center;
-            
+
             // Apply zoom
             uv /= u_zoom;
-            
+
             // Calculate angle from center
             float angle = atan(uv.y, uv.x);
-            
+
             // Add rotation
             angle += u_rotation * 3.14159 / 180.0;
-            
+
             // Create kaleidoscope effect
             float segmentAngle = 2.0 * 3.14159 / u_segments;
             angle = mod(angle, segmentAngle);
-            
+
             // Mirror alternate segments for true kaleidoscope effect
             float halfSegment = segmentAngle * 0.5;
             angle = abs(angle - halfSegment);
-            
+
             // Reconstruct UV coordinates
             float dist = length(uv);
             vec2 newUv = vec2(cos(angle), sin(angle)) * dist + center;
-            
+
             vec4 original = texture2D(u_image, v_texCoord);
             vec4 effect = texture2D(u_image, newUv);
             gl_FragColor = mix(original, effect, u_intensity);
@@ -1160,7 +1160,7 @@ const fragmentShaders = {
             float radius = 2.0 + u_intensity * 4.0;
             vec3 color = vec3(0.0);
             float total = 0.0;
-            
+
             for(float x = -4.0; x <= 4.0; x++) {
                 for(float y = -4.0; y <= 4.0; y++) {
                     vec2 offset = vec2(x, y) / u_resolution * radius;
@@ -1168,7 +1168,7 @@ const fragmentShaders = {
                     total += 1.0;
                 }
             }
-            
+
             gl_FragColor = vec4(color / total, 1.0);
         }
     `,
@@ -1183,10 +1183,10 @@ const fragmentShaders = {
 
         void main() {
             vec2 step = 1.0 / u_resolution * u_intensity * 2.0;
-            
+
             vec4 tl = texture2D(u_image, v_texCoord + vec2(-step.x, -step.y));
             vec4 br = texture2D(u_image, v_texCoord + vec2(step.x, step.y));
-            
+
             vec3 result = vec3(0.5) + (tl.rgb - br.rgb);
             gl_FragColor = vec4(result, 1.0);
         }
@@ -1202,13 +1202,13 @@ const fragmentShaders = {
 
         void main() {
             vec2 step = 1.0 / u_resolution;
-            
+
             vec4 n  = texture2D(u_image, v_texCoord + vec2(0.0, step.y));
             vec4 s  = texture2D(u_image, v_texCoord + vec2(0.0, -step.y));
             vec4 e  = texture2D(u_image, v_texCoord + vec2(step.x, 0.0));
             vec4 w  = texture2D(u_image, v_texCoord + vec2(-step.x, 0.0));
             vec4 c  = texture2D(u_image, v_texCoord);
-            
+
             vec4 edge = abs(c * 4.0 - n - s - e - w);
             vec4 result = mix(c, edge, u_intensity);
             gl_FragColor = result;
@@ -1226,13 +1226,13 @@ const fragmentShaders = {
         void main() {
             vec2 step = 1.0 / u_resolution * u_intensity * 3.0;
             vec4 color = vec4(0.0);
-            
+
             for(float x = -2.0; x <= 2.0; x++) {
                 for(float y = -2.0; y <= 2.0; y++) {
                     color += texture2D(u_image, v_texCoord + vec2(x, y) * step);
                 }
             }
-            
+
             gl_FragColor = color / 25.0;
         }
     `,
@@ -1243,13 +1243,13 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        
+
         uniform float u_grainSize;
         uniform float u_grainAmount;
         uniform float u_clumping;
         uniform float u_scratches;
         uniform float u_dust;
-        
+
         varying vec2 v_texCoord;
 
         float hash(vec2 p) {
@@ -1273,17 +1273,17 @@ const fragmentShaders = {
             vec2 uv = v_texCoord;
             vec4 color = texture2D(u_image, uv);
             float t = u_time;
-            
+
             // 1. Multi-octave Grain (Clumping)
             vec2 grainCoord = uv * u_resolution / (u_grainSize + 0.1);
             float grain1 = noise(grainCoord + t * 0.1);
             float grain2 = noise(grainCoord * 0.5 + t * 0.15);
             float grain = mix(grain1, grain1 * grain2, u_clumping);
-            
+
             float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
             float grainStrength = u_grainAmount * u_intensity * (1.0 - abs(lum - 0.5) * 1.5);
             color.rgb += (grain - 0.5) * grainStrength;
-            
+
             // 2. Scratches (vertical thin lines)
             float scratchProb = 1.0 - u_scratches * u_intensity * 0.05;
             if (hash(vec2(t * 0.2, 0.0)) > scratchProb) {
@@ -1291,7 +1291,7 @@ const fragmentShaders = {
                 float scratch = 1.0 - smoothstep(0.0, 0.002, abs(uv.x - x));
                 color.rgb = mix(color.rgb, vec3(0.1), scratch * 0.5);
             }
-            
+
             // 3. Dust (random black/white spots)
             float dustProb = 1.0 - u_dust * u_intensity * 0.1;
             if (hash(uv + floor(t * 24.0)) > dustProb) {
@@ -1319,7 +1319,7 @@ const fragmentShaders = {
             float r = length(offset);
             float r2 = r * r;
             float r4 = r2 * r2;
-            
+
             // Barrel/pincushion distortion formula
             float distortionFactor = 1.0 + strength * r2 + strength * 0.5 * r4;
             return center + offset * distortionFactor;
@@ -1328,18 +1328,18 @@ const fragmentShaders = {
         void main() {
             vec2 uv = v_texCoord;
             float dist = u_distortion * u_intensity;
-            
+
             // Chromatic dispersion (different distortion per channel)
             vec2 uvR = distort(uv, dist * (1.0 + u_dispersion * 0.01));
             vec2 uvG = distort(uv, dist);
             vec2 uvB = distort(uv, dist * (1.0 - u_dispersion * 0.01));
-            
+
             vec3 color = vec3(
                 texture2D(u_image, uvR).r,
                 texture2D(u_image, uvG).g,
                 texture2D(u_image, uvB).b
             );
-            
+
             gl_FragColor = vec4(color, 1.0);
         }
     `,
@@ -1350,14 +1350,14 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        
+
         uniform float u_tracking;
         uniform float u_vJitter;
         uniform float u_chromaBleed;
         uniform float u_crosstalk;
         uniform float u_noise;
         uniform float u_dropout;
-        
+
         varying vec2 v_texCoord;
 
         float hash(vec2 p) {
@@ -1367,7 +1367,7 @@ const fragmentShaders = {
         void main() {
             vec2 uv = v_texCoord;
             float t = u_time;
-            
+
             // 1. Vertical Jitter (v-sync instability)
             float vj = hash(vec2(t, 0.0)) * u_vJitter * u_intensity * 0.01;
             if (hash(vec2(t, 1.0)) > 0.98) uv.y += vj;
@@ -1376,10 +1376,10 @@ const fragmentShaders = {
             float tracking = sin(uv.y * 10.0 + t) * u_tracking * u_intensity * 0.002;
             tracking += (hash(vec2(t, uv.y)) - 0.5) * u_tracking * u_intensity * 0.001;
             uv.x += tracking;
-            
+
             // 3. Sample color with horizontal blur
             vec3 color = texture2D(u_image, uv).rgb;
-            
+
             // 4. Chroma Bleed (horizontal smearing of color)
             float bleed = u_chromaBleed * u_intensity * 0.01;
             vec3 colorL = texture2D(u_image, uv - vec2(bleed, 0.0)).rgb;
@@ -1390,18 +1390,18 @@ const fragmentShaders = {
             // 5. Luma/Chroma Crosstalk (Herringbone pattern)
             float crosstalk = sin(uv.x * u_resolution.x * 1.5 + uv.y * u_resolution.y * 0.5 + t * 10.0);
             color += crosstalk * u_crosstalk * u_intensity * 0.05;
-            
+
             // 6. Tape Noise
             float noise = (hash(uv + t) - 0.5) * u_noise * u_intensity * 0.2;
             color += noise;
-            
+
             // 7. Realistic Dropouts (white "comet" streaks)
             float dNoise = hash(vec2(t * 0.5, floor(uv.y * u_resolution.y)));
             if (dNoise > 1.0 - u_dropout * u_intensity * 0.01) {
                 float streak = hash(vec2(uv.x * 10.0, t));
                 if (streak > 0.5) color = mix(color, vec3(1.0), streak);
             }
-            
+
             // 8. Slight NTSC tint & pedestal
             color = color * 0.9 + 0.05; // Pedestal
             color.rgb *= vec3(0.95, 1.05, 0.95); // Greenish aging
@@ -1437,42 +1437,42 @@ const fragmentShaders = {
             vec2 pixelCoord = v_texCoord * u_resolution;
             vec3 sourceColor = texture2D(u_image, v_texCoord).rgb;
             float luminance = dot(sourceColor, vec3(0.299, 0.587, 0.114));
-            
+
             // Voronoi cell calculation
             vec2 cellCoord = pixelCoord / u_cellSize;
             vec2 cellId = floor(cellCoord);
             vec2 cellPos = fract(cellCoord);
-            
+
             float minDist = 10.0;
             vec2 closestPoint = vec2(0.0);
-            
+
             // Check 3x3 neighboring cells
             for(float y = -1.0; y <= 1.0; y++) {
                 for(float x = -1.0; x <= 1.0; x++) {
                     vec2 neighborId = cellId + vec2(x, y);
                     vec2 randomOffset = hash2(neighborId);
                     vec2 pointPos = vec2(x, y) + randomOffset;
-                    
+
                     // Sample luminance at cell center for weighted distribution
                     vec2 sampleUV = (neighborId + randomOffset) * u_cellSize / u_resolution;
                     float cellLuminance = dot(texture2D(u_image, sampleUV).rgb, vec3(0.299, 0.587, 0.114));
-                    
+
                     // Adjust point position based on luminance (darker = more points)
                     pointPos += (hash2(neighborId + 0.5) - 0.5) * u_randomness;
-                    
+
                     float dist = length(cellPos - pointPos);
-                    
+
                     if(dist < minDist) {
                         minDist = dist;
                         closestPoint = pointPos;
                     }
                 }
             }
-            
+
             // Calculate dot based on luminance (darker areas = bigger dots)
             float dotRadius = (1.0 - luminance) * u_dotSize * 0.5;
             float dot = smoothstep(dotRadius + 0.1, dotRadius, minDist);
-            
+
             vec3 result = mix(vec3(1.0), vec3(0.0), dot);
             gl_FragColor = vec4(mix(sourceColor, result, u_intensity), 1.0);
         }
@@ -1491,23 +1491,23 @@ const fragmentShaders = {
             vec2 src_size = u_resolution;
             vec2 uv = v_texCoord;
             int radius = int(u_radius);
-            
+
             vec3 m[4];
             vec3 s[4];
             float n[4];
-            
+
             for (int k = 0; k < 4; ++k) {
                 m[k] = vec3(0.0);
                 s[k] = vec3(0.0);
                 n[k] = 0.0;
             }
-            
+
             // Sample in fixed maximum radius, skip if outside actual radius
             for (int j = -10; j <= 10; ++j) {
                 for (int i = -10; i <= 10; ++i) {
                     float fi = float(i);
                     float fj = float(j);
-                    
+
                     // Quadrant 0: top-left
                     if (fi <= 0.0 && fj <= 0.0 && abs(fi) <= u_radius && abs(fj) <= u_radius) {
                         vec3 c = texture2D(u_image, uv + vec2(fi, fj) / src_size).rgb;
@@ -1515,7 +1515,7 @@ const fragmentShaders = {
                         s[0] += c * c;
                         n[0] += 1.0;
                     }
-                    
+
                     // Quadrant 1: top-right
                     if (fi >= 0.0 && fj <= 0.0 && abs(fi) <= u_radius && abs(fj) <= u_radius) {
                         vec3 c = texture2D(u_image, uv + vec2(fi, fj) / src_size).rgb;
@@ -1523,7 +1523,7 @@ const fragmentShaders = {
                         s[1] += c * c;
                         n[1] += 1.0;
                     }
-                    
+
                     // Quadrant 2: bottom-right
                     if (fi >= 0.0 && fj >= 0.0 && abs(fi) <= u_radius && abs(fj) <= u_radius) {
                         vec3 c = texture2D(u_image, uv + vec2(fi, fj) / src_size).rgb;
@@ -1531,7 +1531,7 @@ const fragmentShaders = {
                         s[2] += c * c;
                         n[2] += 1.0;
                     }
-                    
+
                     // Quadrant 3: bottom-left
                     if (fi <= 0.0 && fj >= 0.0 && abs(fi) <= u_radius && abs(fj) <= u_radius) {
                         vec3 c = texture2D(u_image, uv + vec2(fi, fj) / src_size).rgb;
@@ -1541,15 +1541,15 @@ const fragmentShaders = {
                     }
                 }
             }
-            
+
             float min_sigma2 = 1e+2;
             vec3 result = texture2D(u_image, uv).rgb;
-            
+
             for (int k = 0; k < 4; ++k) {
                 if (n[k] > 0.0) {
                     m[k] /= n[k];
                     s[k] = abs(s[k] / n[k] - m[k] * m[k]);
-                    
+
                     float sigma2 = s[k].r + s[k].g + s[k].b;
                     if (sigma2 < min_sigma2) {
                         min_sigma2 = sigma2;
@@ -1557,7 +1557,7 @@ const fragmentShaders = {
                     }
                 }
             }
-            
+
             vec3 original = texture2D(u_image, uv).rgb;
             gl_FragColor = vec4(mix(original, result, u_intensity), 1.0);
         }
@@ -1589,26 +1589,26 @@ const fragmentShaders = {
             vec2 uv = v_texCoord * u_resolution;
             vec3 color = texture2D(u_image, v_texCoord).rgb;
             float luminance = dot(color, vec3(0.299, 0.587, 0.114));
-            
+
             // Multiple line angles based on luminance
             float angle1 = radians(45.0);
             float angle2 = radians(45.0 + u_angleSeparation);
             float angle3 = radians(45.0 + u_angleSeparation * 2.0);
             float angle4 = radians(45.0 + u_angleSeparation * 3.0);
-            
+
             float spacing = u_lineSpacing;
             float width = u_lineWidth * 0.1;
-            
+
             float hatch = 0.0;
-            
+
             // Add hatching layers based on darkness
             if(luminance < 0.9) hatch += line(uv, angle1, spacing, width);
             if(luminance < 0.7) hatch += line(uv, angle2, spacing, width);
             if(luminance < 0.5) hatch += line(uv, angle3, spacing, width);
             if(luminance < 0.3) hatch += line(uv, angle4, spacing, width);
-            
+
             hatch = clamp(hatch, 0.0, 1.0);
-            
+
             vec3 result = vec3(1.0 - hatch);
             gl_FragColor = vec4(mix(color, result, u_intensity), 1.0);
         }
@@ -1631,26 +1631,26 @@ const fragmentShaders = {
         void main() {
             vec3 color = texture2D(u_image, v_texCoord).rgb;
             float luminance = dot(color, vec3(0.299, 0.587, 0.114));
-            
+
             // Shift luminance based on balance
             luminance = pow(luminance, exp(-u_midtoneBalance));
-            
+
             // Calculate weights with smoother transitions (Gaussian-like)
             float shadow = smoothstep(u_shadowRange, 0.0, luminance);
             float highlight = smoothstep(1.0 - u_highlightRange, 1.0, luminance);
-            
+
             // Midtone is what's left, but we use a smooth bell curve for better results
             float midtone = 1.0 - shadow - highlight;
             midtone = clamp(midtone, 0.0, 1.0);
-            
+
             // Blend colors
-            vec3 result = u_shadowColor * shadow + 
-                         u_midtoneColor * midtone + 
+            vec3 result = u_shadowColor * shadow +
+                         u_midtoneColor * midtone +
                          u_highlightColor * highlight;
-            
+
             // Preserve some of the original local contrast
             result *= (1.0 + (luminance - 0.5) * 0.1);
-            
+
             gl_FragColor = vec4(mix(color, result, u_intensity), 1.0);
         }
     `,
@@ -1661,7 +1661,7 @@ const fragmentShaders = {
         uniform float u_time;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        
+
         uniform float u_fringing;
         uniform float u_redOffset;
         uniform float u_greenOffset;
@@ -1669,29 +1669,29 @@ const fragmentShaders = {
         uniform float u_dyeDensity;
         uniform float u_contrast;
         uniform float u_saturation;
-        
+
         varying vec2 v_texCoord;
 
         void main() {
             vec2 uv = v_texCoord;
-            
+
             // Misaligned plates (fringing)
             float fringe = u_fringing * 0.002;
             vec2 rOff = vec2(fringe * u_redOffset, 0.0);
             vec2 gOff = vec2(fringe * u_greenOffset, 0.0);
             vec2 bOff = vec2(fringe * u_blueOffset, 0.0);
-            
+
             float r = texture2D(u_image, uv + rOff).r;
             float g = texture2D(u_image, uv + gOff).g;
             float b = texture2D(u_image, uv + bOff).b;
-            
+
             // 3-strip separation logic
             // Each strip records a component of the light
             vec3 separated = vec3(r, g, b);
-            
+
             // Apply dye density (analogous to exposure/density of the film strips)
             separated = pow(separated, vec3(u_dyeDensity));
-            
+
             // Re-combine using an optimized Technicolor-style color matrix
             // This emphasizes the cyan/magenta/yellow dye-transfer look
             mat3 technicolorMatrix = mat3(
@@ -1699,17 +1699,17 @@ const fragmentShaders = {
                 -0.10,  1.18, -0.08,
                 -0.08, -0.12,  1.20
             );
-            
+
             vec3 result = technicolorMatrix * separated;
-            
+
             // Saturation adjustment
             float luma = dot(result, vec3(0.299, 0.587, 0.114));
             result = mix(vec3(luma), result, u_saturation * 1.5);
-            
+
             // Contrast boost (power curve)
             result = smoothstep(0.0, 1.0, result);
             result = pow(result, vec3(1.0 / (1.0 + u_contrast * 0.2)));
-            
+
             vec3 original = texture2D(u_image, uv).rgb;
             gl_FragColor = vec4(mix(original, result, u_intensity), 1.0);
         }
@@ -1724,15 +1724,15 @@ const fragmentShaders = {
 
         void main() {
             vec3 color = texture2D(u_image, v_texCoord).rgb;
-            
+
             // Normalize RGB vector to unit sphere
             // Preserves hue direction, equalizes saturation/brightness
             float magnitude = length(color);
             vec3 normalized = magnitude > 0.0 ? color / magnitude : vec3(0.0);
-            
+
             // Remap to visible range
             vec3 result = normalized * 0.7 + 0.3;
-            
+
             gl_FragColor = vec4(mix(color, result, u_intensity), 1.0);
         }
     `,
@@ -1798,27 +1798,27 @@ const fragmentShaders = {
 
         void main() {
             vec2 pixelSize = 1.0 / u_resolution * u_scale;
-            
+
             // Sample surrounding pixels
             vec3 cL = texture2D(u_image, v_texCoord + vec2(-pixelSize.x, 0.0)).rgb;
             vec3 cR = texture2D(u_image, v_texCoord + vec2(pixelSize.x, 0.0)).rgb;
             vec3 cU = texture2D(u_image, v_texCoord + vec2(0.0, pixelSize.y)).rgb;
             vec3 cD = texture2D(u_image, v_texCoord + vec2(0.0, -pixelSize.y)).rgb;
-            
+
             // Calculate curl (rotation) of color field
             // curl = ∂v/∂x - ∂u/∂y
             vec3 dx = (cR - cL) * 0.5;
             vec3 dy = (cU - cD) * 0.5;
-            
+
             // Curl magnitude (scalar in 2D)
             float curlR = dy.r - dx.r;
             float curlG = dy.g - dx.g;
             float curlB = dy.b - dx.b;
-            
+
             // Visualize curl with false color
             vec3 curl = vec3(curlR, curlG, curlB);
             vec3 result = curl * 5.0 + 0.5;
-            
+
             vec3 original = texture2D(u_image, v_texCoord).rgb;
             gl_FragColor = vec4(mix(original, result, u_intensity), 1.0);
         }
@@ -1835,24 +1835,24 @@ const fragmentShaders = {
 
         void main() {
             vec2 pixelSize = 1.0 / u_resolution * u_scale;
-            
+
             // Sample surrounding pixels
             vec3 cL = texture2D(u_image, v_texCoord + vec2(-pixelSize.x, 0.0)).rgb;
             vec3 cR = texture2D(u_image, v_texCoord + vec2(pixelSize.x, 0.0)).rgb;
             vec3 cU = texture2D(u_image, v_texCoord + vec2(0.0, pixelSize.y)).rgb;
             vec3 cD = texture2D(u_image, v_texCoord + vec2(0.0, -pixelSize.y)).rgb;
             vec3 cC = texture2D(u_image, v_texCoord).rgb;
-            
+
             // Calculate divergence (expansion/contraction) of color field
             // div = ∂u/∂x + ∂v/∂y
             vec3 dx = (cR - cL) * 0.5;
             vec3 dy = (cU - cD) * 0.5;
-            
+
             vec3 divergence = dx + dy;
-            
+
             // Map divergence to visible range
             vec3 result = divergence * 3.0 + 0.5;
-            
+
             vec3 original = texture2D(u_image, v_texCoord).rgb;
             gl_FragColor = vec4(mix(original, result, u_intensity), 1.0);
         }
@@ -1955,18 +1955,18 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Red #25 filter - transmits red, blocks blue/green
             // Transmission curve: R=92%, G=15%, B=3%
             vec3 transmission = vec3(0.92, 0.15, 0.03);
-            
+
             // Apply filter absorption
             vec3 filtered = color.rgb * transmission;
-            
+
             // Normalize brightness to compensate for light loss
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -1979,15 +1979,15 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Orange #21 filter - moderate contrast
             // Transmission: R=90%, G=45%, B=10%
             vec3 transmission = vec3(0.90, 0.45, 0.10);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2000,15 +2000,15 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Yellow #8 filter - slight contrast
             // Transmission: R=95%, G=85%, B=15%
             vec3 transmission = vec3(0.95, 0.85, 0.15);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2021,15 +2021,15 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Green #11 filter - yellowish green for landscapes
             // Transmission: R=15%, G=90%, B=20%
             vec3 transmission = vec3(0.15, 0.90, 0.20);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2042,15 +2042,15 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Blue #47 filter - deep blue for dramatic skies
             // Transmission: R=5%, G=20%, B=88%
             vec3 transmission = vec3(0.05, 0.20, 0.88);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2064,15 +2064,15 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // 81A Warming filter - shifts color balance toward amber
             // Reduces blue, enhances red/yellow
             vec3 transmission = vec3(1.0, 0.95, 0.80 + (1.0 - u_strength) * 0.15);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2086,15 +2086,15 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // 82A Cooling filter - shifts color balance toward blue
             // Reduces red/yellow, enhances blue
             vec3 transmission = vec3(0.85 + (1.0 - u_strength) * 0.15, 0.95, 1.0);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2109,33 +2109,33 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Simulate polarizer - reduces specular reflections
             // Enhances sky contrast based on angle
-            
+
             // Calculate angle from center
             vec2 center = vec2(0.5, 0.5);
             vec2 toPixel = v_texCoord - center;
             float pixelAngle = atan(toPixel.y, toPixel.x) + u_angle;
-            
+
             // Polarization effect - strongest at 90° from sun angle
             float polarization = 0.5 + 0.5 * cos(pixelAngle * 2.0);
-            
+
             // Darkens blues (sky) more than other colors
             float skyness = color.b - max(color.r, color.g);
             float darkening = mix(0.85, 0.55, skyness * polarization);
-            
+
             // Reduce specular highlights
             float brightness = dot(color.rgb, vec3(0.299, 0.587, 0.114));
             float highlight = smoothstep(0.7, 1.0, brightness);
             darkening = mix(darkening, darkening * 0.7, highlight);
-            
+
             vec3 filtered = color.rgb * darkening;
-            
+
             // Boost saturation slightly
             float luma = dot(filtered, vec3(0.299, 0.587, 0.114));
             filtered = mix(vec3(luma), filtered, 1.15);
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2149,12 +2149,12 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Neutral Density filter - reduces light uniformly
             // Each stop reduces light by 50%
             float reduction = pow(0.5, u_stops);
             vec3 filtered = color.rgb * reduction;
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2167,22 +2167,22 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // UV/Haze filter - cuts UV and reduces blue haze
             // Minimal effect on other colors
             vec3 transmission = vec3(1.0, 0.98, 0.85);
             vec3 filtered = color.rgb * transmission;
-            
+
             float avgTransmission = (transmission.r + transmission.g + transmission.b) / 3.0;
             filtered = filtered / avgTransmission;
-            
+
             // Also reduces atmospheric haze (desaturates distant blues)
             float blueness = color.b - max(color.r, color.g);
             if (blueness > 0.0) {
                 float luma = dot(filtered, vec3(0.299, 0.587, 0.114));
                 filtered = mix(filtered, vec3(luma), blueness * 0.3);
             }
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2195,24 +2195,24 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Infrared film simulation
             // Foliage (high chlorophyll) becomes very bright
             // Blue sky becomes nearly black
             // Skin tones become pale and ethereal
-            
+
             // Create IR response - foliage reflects IR strongly
             float ir = color.g * 1.5 - color.b * 0.8;
             ir = clamp(ir, 0.0, 1.0);
-            
+
             // Mix channels to simulate B&W IR film
             float irBW = ir * 0.7 + color.r * 0.3;
-            
+
             // Add characteristic IR glow
             irBW = pow(irBW, 0.85);
-            
+
             vec3 filtered = vec3(irBW);
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2225,23 +2225,23 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Didymium filter - enhances fall foliage colors
             // Absorbs yellow-green (580-590nm), boosts red and orange
-            
+
             // Enhance red-orange
             float warmth = (color.r + color.g * 0.3) - color.b * 0.5;
             warmth = clamp(warmth, 0.0, 1.0);
-            
+
             vec3 filtered = color.rgb;
             filtered.r = min(1.0, color.r * (1.0 + warmth * 0.4));
             filtered.g = color.g * (1.0 - warmth * 0.2);
             filtered.b = color.b * 0.85;
-            
+
             // Boost saturation of warm colors
             float luma = dot(filtered, vec3(0.299, 0.587, 0.114));
             filtered = mix(vec3(luma), filtered, 1.3);
-            
+
             gl_FragColor = vec4(mix(color.rgb, filtered, u_intensity), color.a);
         }
     `,
@@ -2349,39 +2349,214 @@ const fragmentShaders = {
         }
     `,
 
+    harmony_recolor: `
+        precision highp float;
+        uniform sampler2D u_image;
+        uniform float u_intensity;
+        uniform float u_baseHue;
+        uniform float u_harmonyMode;
+        uniform float u_harmonyStrength;
+        uniform float u_hueShift;
+        uniform float u_chromaScale;
+        uniform float u_chromaLimit;
+        uniform float u_lightnessProtect;
+        uniform float u_neutralProtect;
+        uniform float u_skinProtect;
+        uniform float u_skinHue;
+        uniform float u_skinWidth;
+        uniform float u_skinSoftness;
+        uniform float u_protectHue1;
+        uniform float u_protectWidth1;
+        uniform float u_protectStrength1;
+        uniform float u_protectHue2;
+        uniform float u_protectWidth2;
+        uniform float u_protectStrength2;
+        varying vec2 v_texCoord;
+
+        const float PI = 3.14159265359;
+        const float TAU = 6.28318530718;
+
+        vec3 srgbToLinear(vec3 c) {
+            vec3 lo = c / 12.92;
+            vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+            return mix(lo, hi, step(vec3(0.04045), c));
+        }
+
+        vec3 linearToSrgb(vec3 c) {
+            c = clamp(c, 0.0, 1.0);
+            vec3 lo = c * 12.92;
+            vec3 hi = pow(c, vec3(1.0 / 2.4)) * 1.055 - 0.055;
+            return mix(lo, hi, step(vec3(0.0031308), c));
+        }
+
+        vec3 linearToOklab(vec3 rgb) {
+            float l = 0.4122214708 * rgb.r + 0.5363325363 * rgb.g + 0.0514459929 * rgb.b;
+            float m = 0.2119034982 * rgb.r + 0.6806995451 * rgb.g + 0.1073969566 * rgb.b;
+            float s = 0.0883024619 * rgb.r + 0.2817188376 * rgb.g + 0.6299787005 * rgb.b;
+
+            float l_ = pow(max(l, 0.0), 0.333333);
+            float m_ = pow(max(m, 0.0), 0.333333);
+            float s_ = pow(max(s, 0.0), 0.333333);
+
+            return vec3(
+                0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+                1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+                0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+            );
+        }
+
+        vec3 oklabToLinear(vec3 lab) {
+            float l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+            float m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+            float s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+
+            float l = l_ * l_ * l_;
+            float m = m_ * m_ * m_;
+            float s = s_ * s_ * s_;
+
+            return vec3(
+                 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+            );
+        }
+
+        vec3 oklabToOklch(vec3 lab) {
+            return vec3(lab.x, length(lab.yz), atan(lab.z, lab.y));
+        }
+
+        vec3 oklchToOklab(vec3 lch) {
+            return vec3(lch.x, lch.y * cos(lch.z), lch.y * sin(lch.z));
+        }
+
+        vec3 rgb2hsv(vec3 c) {
+            float mx = max(c.r, max(c.g, c.b));
+            float mn = min(c.r, min(c.g, c.b));
+            float d = mx - mn;
+            float h = 0.0;
+            if (d > 0.0001) {
+                if (mx == c.r) h = mod((c.g - c.b) / d * 60.0, 360.0);
+                else if (mx == c.g) h = (c.b - c.r) / d * 60.0 + 120.0;
+                else h = (c.r - c.g) / d * 60.0 + 240.0;
+            }
+            float s = (mx > 0.0001) ? d / mx : 0.0;
+            return vec3(h, s, mx);
+        }
+
+        float hueDistanceDeg(float a, float b) {
+            return abs(mod(a - b + 540.0, 360.0) - 180.0);
+        }
+
+        float hueMask(float hue, float center, float width, float softness) {
+            float dist = hueDistanceDeg(hue, center);
+            float inner = max(width, 0.0);
+            float outer = inner + max(softness, 0.001);
+            return 1.0 - smoothstep(inner, outer, dist);
+        }
+
+        float angleDelta(float a, float b) {
+            return atan(sin(b - a), cos(b - a));
+        }
+
+        float nearestHue(float hue, float candidate, float currentBest) {
+            float currentDist = abs(angleDelta(hue, currentBest));
+            float candidateDist = abs(angleDelta(hue, candidate));
+            return mix(currentBest, candidate, step(candidateDist, currentDist));
+        }
+
+        float harmonicHue(float hue, float base, float mode) {
+            float best = base;
+
+            if (mode < 0.5) {
+                best = nearestHue(hue, base - PI / 6.0, best);
+                best = nearestHue(hue, base + PI / 6.0, best);
+            } else if (mode < 1.5) {
+                best = nearestHue(hue, base + PI, best);
+            } else if (mode < 2.5) {
+                best = nearestHue(hue, base + TAU / 3.0, best);
+                best = nearestHue(hue, base + 2.0 * TAU / 3.0, best);
+            } else if (mode < 3.5) {
+                best = nearestHue(hue, base + PI / 2.0, best);
+                best = nearestHue(hue, base + PI, best);
+                best = nearestHue(hue, base + 1.5 * PI, best);
+            }
+
+            return best;
+        }
+
+        vec3 preserveLuma(vec3 original, vec3 graded, float strength) {
+            float originalLum = dot(original, vec3(0.2126, 0.7152, 0.0722));
+            float gradedLum = max(dot(graded, vec3(0.2126, 0.7152, 0.0722)), 0.001);
+            vec3 matched = graded * (originalLum / gradedLum);
+            return mix(graded, matched, strength);
+        }
+
+        void main() {
+            vec4 src = texture2D(u_image, v_texCoord);
+            vec3 hsv = rgb2hsv(src.rgb);
+            float lum = dot(src.rgb, vec3(0.2126, 0.7152, 0.0722));
+
+            float neutralMask = (1.0 - smoothstep(0.035, 0.18, hsv.y)) * u_neutralProtect;
+            float skinHueMask = hueMask(hsv.x, u_skinHue, u_skinWidth, u_skinSoftness);
+            float skinSatMask = smoothstep(0.05, 0.18, hsv.y) * (1.0 - smoothstep(0.82, 1.0, hsv.y));
+            float skinLumMask = smoothstep(0.10, 0.24, lum) * (1.0 - smoothstep(0.88, 1.0, lum));
+            float skinMask = skinHueMask * skinSatMask * skinLumMask * u_skinProtect;
+            float protect1 = hueMask(hsv.x, u_protectHue1, u_protectWidth1, u_protectWidth1 * 0.75) * u_protectStrength1;
+            float protect2 = hueMask(hsv.x, u_protectHue2, u_protectWidth2, u_protectWidth2 * 0.75) * u_protectStrength2;
+            float protection = clamp(max(max(neutralMask, skinMask), max(protect1, protect2)), 0.0, 1.0);
+
+            vec3 linear = srgbToLinear(src.rgb);
+            vec3 lch = oklabToOklch(linearToOklab(linear));
+            float originalHue = lch.z;
+            float base = radians(u_baseHue);
+            float targetHue = harmonicHue(originalHue + radians(u_hueShift), base, u_harmonyMode);
+            float huePull = angleDelta(originalHue, targetHue);
+
+            float effectiveHarmony = u_harmonyStrength * (1.0 - protection);
+            lch.z = originalHue + huePull * effectiveHarmony + radians(u_hueShift) * (1.0 - protection);
+            lch.y = min(lch.y * mix(1.0, u_chromaScale, 1.0 - protection), u_chromaLimit);
+
+            vec3 result = linearToSrgb(oklabToLinear(oklchToOklab(lch)));
+            result = clamp(preserveLuma(src.rgb, result, u_lightnessProtect), 0.0, 1.0);
+
+            float effectiveBlend = u_intensity * (1.0 - protection);
+            gl_FragColor = vec4(mix(src.rgb, result, effectiveBlend), src.a);
+        }
+    `,
+
     gradient_map: `
         precision mediump float;
         uniform sampler2D u_image;
         uniform float u_intensity;
         varying vec2 v_texCoord;
-        
+
         // Gradient stops (up to 8 stops)
         uniform int u_numStops;
         uniform float u_stops[8];      // positions 0.0-1.0
         uniform vec3 u_colors[8];      // RGB colors
-        
+
         vec3 evaluateGradient(float t) {
             // Clamp to valid range
             t = clamp(t, 0.0, 1.0);
-            
+
             // Find surrounding stops
             if (t <= u_stops[0]) return u_colors[0];
-            
+
             // Check each possible stop pair (using constant loop)
             for (int i = 0; i < 7; i++) {
                 float t0 = u_stops[i];
                 float t1 = u_stops[i + 1];
-                
+
                 // Only process if this stop index is valid
                 bool validStop = float(i) < float(u_numStops) - 1.0;
-                
+
                 if (validStop && t >= t0 && t <= t1) {
                     // Interpolate between stops
                     float factor = (t - t0) / (t1 - t0);
                     return mix(u_colors[i], u_colors[i + 1], factor);
                 }
             }
-            
+
             // Return last color (find it by checking all positions)
             vec3 lastColor = u_colors[0];
             for (int i = 0; i < 8; i++) {
@@ -2394,14 +2569,200 @@ const fragmentShaders = {
 
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Calculate luminance
             float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-            
+
             // Map to gradient
             vec3 mapped = evaluateGradient(luma);
-            
+
             gl_FragColor = vec4(mix(color.rgb, mapped, u_intensity), color.a);
+        }
+    `,
+
+    spatial_parallax: `
+        precision mediump float;
+        uniform sampler2D u_image;
+        uniform sampler2D u_depthTexture;
+        uniform float u_intensity;
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_time;
+        uniform float u_parallaxScale;
+        uniform float u_mouseFollow;
+        uniform float u_autoOrbitX;
+        uniform float u_autoOrbitY;
+        uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
+        varying vec2 v_texCoord;
+
+        float pseudoDepth(vec2 uv) {
+            vec3 color = texture2D(u_image, uv).rgb;
+            return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        float depthAt(vec2 uv) {
+            return u_useDepthTexture > 0.5 ? texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r : pseudoDepth(uv);
+        }
+
+        void main() {
+            vec2 pointer = u_mouse * 2.0 - 1.0;
+            vec2 orbit = vec2(sin(u_time * 0.7) * u_autoOrbitX, cos(u_time * 0.55) * u_autoOrbitY);
+            vec2 view = mix(orbit, pointer, step(0.5, u_mouseFollow));
+            float depth = depthAt(v_texCoord);
+            vec2 offset = view * (depth - 0.5) * u_parallaxScale;
+            vec2 uv = clamp(v_texCoord + offset, 0.0, 1.0);
+            vec4 original = texture2D(u_image, v_texCoord);
+            vec4 shifted = texture2D(u_image, uv);
+            gl_FragColor = vec4(mix(original.rgb, shifted.rgb, u_intensity), original.a);
+        }
+    `,
+
+    spatial_stereo_sbs: `
+        precision mediump float;
+        uniform sampler2D u_image;
+        uniform sampler2D u_depthTexture;
+        uniform float u_intensity;
+        uniform float u_parallaxScale;
+        uniform float u_convergence;
+        uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
+        varying vec2 v_texCoord;
+
+        float pseudoDepth(vec2 uv) {
+            vec3 color = texture2D(u_image, uv).rgb;
+            return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        float depthAt(vec2 uv) {
+            return u_useDepthTexture > 0.5 ? texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r : pseudoDepth(uv);
+        }
+
+        void main() {
+            bool rightEye = v_texCoord.x > 0.5;
+            vec2 eyeUv = vec2(rightEye ? (v_texCoord.x - 0.5) * 2.0 : v_texCoord.x * 2.0, v_texCoord.y);
+            float depth = depthAt(eyeUv);
+            float eye = rightEye ? 1.0 : -1.0;
+            float shift = (depth - u_convergence) * u_parallaxScale * eye * u_intensity;
+            vec2 sampleUv = clamp(eyeUv + vec2(shift, 0.0), 0.0, 1.0);
+            gl_FragColor = texture2D(u_image, sampleUv);
+        }
+    `,
+
+    dynamic_relight: `
+        precision mediump float;
+        uniform sampler2D u_image;
+        uniform sampler2D u_depthTexture;
+        uniform sampler2D u_normalTexture;
+        uniform float u_intensity;
+        uniform vec2 u_resolution;
+        uniform vec2 u_mouse;
+        uniform float u_mouseFollow;
+        uniform float u_lightPosX;
+        uniform float u_lightPosY;
+        uniform float u_lightPosZ;
+        uniform float u_ambient;
+        uniform float u_time;
+        uniform float u_useDepthTexture;
+        uniform float u_useNormalTexture;
+        uniform float u_previousParallaxEnabled;
+        uniform float u_previousParallaxScale;
+        uniform float u_previousParallaxMix;
+        uniform float u_previousParallaxUseDepth;
+        uniform float u_previousParallaxMouseFollow;
+        uniform float u_previousParallaxAutoOrbitX;
+        uniform float u_previousParallaxAutoOrbitY;
+        uniform float u_depthFlipY;
+        varying vec2 v_texCoord;
+
+        float pseudoDepth(vec2 uv) {
+            vec3 color = texture2D(u_image, uv).rgb;
+            return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        float rawDepthAt(vec2 uv) {
+            return u_useDepthTexture > 0.5 ? texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r : pseudoDepth(uv);
+        }
+
+        float parallaxDepthAt(vec2 uv) {
+            return u_previousParallaxUseDepth > 0.5 ? texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r : pseudoDepth(uv);
+        }
+
+        vec2 parallaxLookupUv(vec2 uv) {
+            if (u_previousParallaxEnabled < 0.5 || u_previousParallaxMix < 0.001) return uv;
+            vec2 pointer = u_mouse * 2.0 - 1.0;
+            vec2 orbit = vec2(
+                sin(u_time * 0.7) * u_previousParallaxAutoOrbitX,
+                cos(u_time * 0.55) * u_previousParallaxAutoOrbitY
+            );
+            vec2 view = mix(orbit, pointer, step(0.5, u_previousParallaxMouseFollow));
+            float depth = parallaxDepthAt(uv);
+            vec2 shifted = clamp(uv + view * (depth - 0.5) * u_previousParallaxScale, 0.0, 1.0);
+            return mix(uv, shifted, clamp(u_previousParallaxMix, 0.0, 1.0));
+        }
+
+        float depthAt(vec2 uv) {
+            return rawDepthAt(uv);
+        }
+
+        vec3 depthNormal(vec2 uv) {
+            vec2 px = 1.0 / u_resolution;
+            float c = depthAt(uv);
+            float r = depthAt(uv + vec2(px.x, 0.0));
+            float u = depthAt(uv + vec2(0.0, px.y));
+            return normalize(vec3((c - r) * 8.0, (c - u) * 8.0, 1.0));
+        }
+
+        void main() {
+            vec4 color = texture2D(u_image, v_texCoord);
+            vec2 lightXY = mix(vec2(u_lightPosX, u_lightPosY), u_mouse, step(0.5, u_mouseFollow));
+            vec2 auxUv = parallaxLookupUv(v_texCoord);
+            float depth = depthAt(auxUv);
+            vec3 normal = u_useNormalTexture > 0.5
+                ? normalize(texture2D(u_normalTexture, u_depthFlipY > 0.5 ? vec2(auxUv.x, 1.0 - auxUv.y) : auxUv).rgb * 2.0 - 1.0)
+                : depthNormal(auxUv);
+            vec3 lightDir = normalize(vec3(lightXY - v_texCoord, u_lightPosZ + depth * 0.25));
+            float diffuse = max(dot(normal, lightDir), 0.0);
+            float rim = pow(1.0 - max(dot(normal, vec3(0.0, 0.0, 1.0)), 0.0), 2.0);
+            vec3 lit = color.rgb * (u_ambient + diffuse * (1.0 - u_ambient)) + rim * vec3(0.12, 0.18, 0.22);
+            gl_FragColor = vec4(mix(color.rgb, lit, u_intensity), color.a);
+        }
+    `,
+
+    depth_scanner: `
+        precision mediump float;
+        uniform sampler2D u_image;
+        uniform sampler2D u_depthTexture;
+        uniform float u_intensity;
+        uniform vec2 u_resolution;
+        uniform float u_time;
+        uniform float u_scanPos;
+        uniform float u_scanWidth;
+        uniform vec3 u_scanColor;
+        uniform float u_timeMode;
+        uniform float u_useDepthTexture;
+        varying vec2 v_texCoord;
+
+        float pseudoDepth(vec2 uv) {
+            vec3 color = texture2D(u_image, uv).rgb;
+            return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        float depthAt(vec2 uv) {
+            return u_useDepthTexture > 0.5 ? texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r : pseudoDepth(uv);
+        }
+
+        void main() {
+            vec4 color = texture2D(u_image, v_texCoord);
+            float scanPos = mix(u_scanPos, fract(u_time * 0.18), step(0.5, u_timeMode));
+            float depth = depthAt(v_texCoord);
+            float band = 1.0 - smoothstep(0.0, max(u_scanWidth, 0.001), abs(depth - scanPos));
+            vec2 px = 1.0 / u_resolution;
+            float edgeDelta = abs(depth - depthAt(v_texCoord + vec2(px.x, 0.0))) +
+                              abs(depth - depthAt(v_texCoord + vec2(0.0, px.y)));
+            float edge = smoothstep(0.03, 0.18, edgeDelta);
+            vec3 scanned = color.rgb + u_scanColor * (band * 0.75 + edge * 0.35);
+            gl_FragColor = vec4(mix(color.rgb, scanned, u_intensity), color.a);
         }
     `,
 
@@ -2412,28 +2773,30 @@ const fragmentShaders = {
         uniform float u_intensity;
         uniform vec2 u_resolution;
         uniform float u_time;
-        
+
         // SSAO parameters
         uniform float u_radius;
         uniform float u_bias;
         uniform float u_previewMode;
         uniform float u_useDepthTexture;  // 0 = pseudo-depth, 1 = MiDAS depth
-        
+        uniform float u_depthFlipY;
+        uniform float u_invertDepth;
+
         varying vec2 v_texCoord;
-        
+
         // Generate pseudo-random value
         float hash(vec2 p) {
             return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
         }
-        
+
         // Generate pseudo-depth from luminance and edges
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             float luma = dot(color, vec3(0.299, 0.587, 0.114));
-            
+
             // Darker = further away (inverted for more natural look)
             float depth = 1.0 - luma;
-            
+
             // Edge detection contributes to depth (edges = geometry changes)
             vec2 texelSize = 1.0 / u_resolution;
             float edgeX = abs(
@@ -2445,78 +2808,80 @@ const fragmentShaders = {
                 dot(texture2D(u_image, uv - vec2(0.0, texelSize.y)).rgb, vec3(0.299, 0.587, 0.114))
             );
             float edge = sqrt(edgeX * edgeX + edgeY * edgeY);
-            
+
             return depth + edge * 0.3;
         }
-        
+
         // Get depth from appropriate source
         float getDepth(vec2 uv) {
+            float depth;
             if (u_useDepthTexture > 0.5) {
                 // Use MiDAS depth texture (grayscale)
-                return texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 // Use pseudo-depth
-                return getPseudoDepth(uv);
+                depth = getPseudoDepth(uv);
             }
+            return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         // Estimate normal from depth gradients
         vec3 getNormal(vec2 uv) {
             vec2 texelSize = 1.0 / u_resolution;
-            
+
             float depthCenter = getDepth(uv);
             float depthRight = getDepth(uv + vec2(texelSize.x, 0.0));
             float depthTop = getDepth(uv + vec2(0.0, texelSize.y));
-            
+
             vec3 dx = vec3(texelSize.x, 0.0, depthRight - depthCenter);
             vec3 dy = vec3(0.0, texelSize.y, depthTop - depthCenter);
-            
+
             return normalize(cross(dx, dy));
         }
-        
+
         // SSAO calculation
         float calculateAO(vec2 uv) {
             float depth = getDepth(uv);
             vec3 normal = getNormal(uv);
-            
+
             // Sample points in a hemisphere
             float ao = 0.0;
             float samples = 16.0;
             float radius = u_radius * 0.01; // Scale to reasonable size
-            
+
             for (float i = 0.0; i < 16.0; i++) {
                 // Generate random offset
                 float angle = (i + hash(uv + u_time * 0.001)) * 0.39269908; // 2*PI/16
                 float distance = (i + 0.5) / samples;
-                
+
                 vec2 offset = vec2(cos(angle), sin(angle)) * radius * distance;
                 vec2 sampleUV = uv + offset;
-                
+
                 // Get depth at sample point
                 float sampleDepth = getDepth(sampleUV);
-                
+
                 // Compare depths
                 float rangeCheck = smoothstep(0.0, 1.0, radius / abs(depth - sampleDepth));
-                
+
                 // If sample is closer to camera, it occludes current pixel
                 float occluded = step(sampleDepth + u_bias, depth);
                 ao += occluded * rangeCheck;
             }
-            
+
             ao = 1.0 - (ao / samples);
-            
+
             // Enhance contrast
             ao = pow(ao, 1.5);
-            
+
             return ao;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             // Calculate ambient occlusion
             float ao = calculateAO(v_texCoord);
-            
+
             // Preview mode: show AO map or depth map
             if (u_previewMode > 1.5) {
                 // Preview depth map
@@ -2539,62 +2904,91 @@ const fragmentShaders = {
         uniform sampler2D u_depthTexture;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        uniform float u_focalDepth;
-        uniform float u_focalRange;
-        uniform float u_bokehStrength;
+        uniform float u_focalDepth;    // focus distance mapped to depth (0–1)
+        uniform float u_fNumber;       // f-stop (e.g. 1.4, 2.8, 8.0)
+        uniform float u_focalLength;   // focal length in mm (e.g. 24, 50, 85, 200)
+        uniform float u_maxBlur;       // max CoC radius in pixels
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
-            vec3 color = texture2D(u_image, uv).rgb;
-            return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
+            vec3 col = texture2D(u_image, uv).rgb;
+            return 1.0 - dot(col, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
-        // Hexagonal bokeh blur
-        vec4 bokehBlur(vec2 uv, float blur) {
+
+        // Physical circle of confusion radius (pixels).
+        // Reference: 50 mm f/2.8 at focus = aperture diameter ~17.86 mm.
+        // Ratio scales linearly with aperture diameter (focalLength / fNumber)
+        // and with normalised defocus distance from the focus plane.
+        float circleOfConfusion(float depth) {
+            float apertureDiam = u_focalLength / max(u_fNumber, 0.1);
+            const float refAperture = 17.857; // 50 mm / 2.8
+            float defocus = abs(depth - u_focalDepth) / max(u_focalDepth, 0.001);
+            return clamp((apertureDiam / refAperture) * defocus * u_maxBlur, 0.0, u_maxBlur);
+        }
+
+        // Vogel-spiral bokeh blur with luminance-weighted HDR accumulation.
+        vec4 bokehBlur(vec2 uv, float radius) {
             vec4 color = vec4(0.0);
             float total = 0.0;
             vec2 texelSize = 1.0 / u_resolution;
-            
-            float radius = blur * u_bokehStrength;
-            float sampleCount = clamp(radius * 2.0, 1.0, 20.0);
-            
-            for (int i = 0; i < 20; i++) {
-                if (float(i) >= sampleCount) break;
-                float angle = float(i) * 0.314159; // PI/10 for hexagonal pattern
-                for (int j = 1; j <= 3; j++) {
-                    vec2 offset = vec2(cos(angle), sin(angle)) * texelSize * float(j) * radius;
-                    color += texture2D(u_image, uv + offset);
-                    total += 1.0;
-                }
+
+            const float GOLDEN_ANGLE = 2.39996323;
+            // Adaptive sample count: more samples for larger bokeh discs.
+            float samples = clamp(radius * radius * 0.45, 8.0, 48.0);
+
+            for (float i = 0.0; i < 48.0; i++) {
+                if (i >= samples) break;
+                float r = sqrt((i + 0.5) / samples) * radius;
+                float theta = i * GOLDEN_ANGLE;
+                vec2 offset = vec2(cos(theta), sin(theta)) * r * texelSize;
+
+                vec4 s = texture2D(u_image, uv + offset);
+                float luma = dot(s.rgb, vec3(0.299, 0.587, 0.114));
+                // Slight luminance boost so specular highlights bloom naturally.
+                float weight = 1.0 + pow(luma, 3.0) * 1.5;
+
+                color += s * weight;
+                total += weight;
             }
-            
+
             return color / total;
         }
-        
+
         void main() {
+            if (u_intensity < 0.01) {
+                gl_FragColor = texture2D(u_image, v_texCoord);
+                return;
+            }
+
             float depth = getDepth(v_texCoord);
-            vec4 color = texture2D(u_image, v_texCoord);
-            
-            // Calculate blur amount based on distance from focal plane
-            float depthDiff = abs(depth - u_focalDepth);
-            float blurAmount = smoothstep(0.0, u_focalRange, depthDiff);
-            
-            vec4 blurred = bokehBlur(v_texCoord, blurAmount * 10.0);
-            
-            gl_FragColor = mix(color, blurred, u_intensity * blurAmount);
+            vec4 sharp = texture2D(u_image, v_texCoord);
+
+            float blurRadius = circleOfConfusion(depth);
+
+            if (blurRadius < 0.5) {
+                gl_FragColor = sharp;
+                return;
+            }
+
+            vec4 blurred = bokehBlur(v_texCoord, blurRadius);
+
+            // Blend proportional to how defocused the pixel is, scaled by intensity.
+            float blendFactor = clamp(blurRadius / max(u_maxBlur, 1.0), 0.0, 1.0) * u_intensity;
+            gl_FragColor = mix(sharp, blurred, blendFactor);
         }
     `,
 
@@ -2608,36 +3002,68 @@ const fragmentShaders = {
         uniform float u_focusWidth;
         uniform float u_blurStrength;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
-        vec4 blur(vec2 uv, float amount) {
-            vec4 color = vec4(0.0);
-            vec2 texelSize = 1.0 / u_resolution;
-            
-            float sampleCount = clamp(amount * 3.0, 1.0, 15.0);
-            float totalWeight = 0.0;
-            
-            for (int i = -15; i <= 15; i++) {
-                if (abs(float(i)) > sampleCount) continue;
-                float weight = 1.0 - abs(float(i)) / sampleCount;
-                color += texture2D(u_image, uv + vec2(0.0, float(i)) * texelSize * amount) * weight;
-                totalWeight += weight;
-            }
-            
-            return color / totalWeight;
+
+        float getPseudoDepth(vec2 uv) {
+            vec3 color = texture2D(u_image, uv).rgb;
+            return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
+        float getDepth(vec2 uv) {
+            float depth;
+            if (u_useDepthTexture > 0.5) {
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
+            } else {
+                depth = getPseudoDepth(uv);
+            }
+            return u_invertDepth > 0.5 ? 1.0 - depth : depth;
+        }
+
+        vec4 blur(vec2 uv, float radius) {
+            if (radius < 0.01) return texture2D(u_image, uv);
+
+            vec4 color = vec4(0.0);
+            float total = 0.0;
+            vec2 texelSize = 1.0 / u_resolution;
+
+            const float GOLDEN_ANGLE = 2.39996323;
+            float samples = clamp(radius * radius * 0.5, 4.0, 32.0);
+
+            for (float i = 0.0; i < 32.0; i++) {
+                if (i >= samples) break;
+                float r = sqrt(i + 0.5) / sqrt(samples) * radius;
+                float theta = i * GOLDEN_ANGLE;
+                vec2 offset = vec2(cos(theta), sin(theta)) * r * texelSize;
+
+                vec4 sampleColor = texture2D(u_image, uv + offset);
+                float luma = dot(sampleColor.rgb, vec3(0.299, 0.587, 0.114));
+                float weight = 1.0 + pow(luma, 4.0) * 1.5;
+
+                color += sampleColor * weight;
+                total += weight;
+            }
+
+            return color / total;
+        }
+
         void main() {
+            if (u_blurStrength < 0.01 || u_intensity < 0.01) {
+                gl_FragColor = texture2D(u_image, v_texCoord);
+                return;
+            }
+
             vec4 color = texture2D(u_image, v_texCoord);
-            
-            // Distance from focus line
-            float dist = abs(v_texCoord.y - u_focusPosition);
+
+            // Screen-space tilt by default; depth-space focus when a depth map is enabled.
+            float focusCoord = u_useDepthTexture > 0.5 ? getDepth(v_texCoord) : v_texCoord.y;
+            float dist = abs(focusCoord - u_focusPosition);
             float blurAmount = smoothstep(u_focusWidth * 0.5, u_focusWidth, dist);
-            
+
             vec4 blurred = blur(v_texCoord, blurAmount * u_blurStrength);
-            
+
             gl_FragColor = mix(color, blurred, u_intensity * blurAmount);
         }
     `,
@@ -2651,32 +3077,33 @@ const fragmentShaders = {
         uniform float u_fogDensity;
         uniform vec3 u_fogColor;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float depth = getDepth(v_texCoord);
-            
+
             // Calculate fog amount
             float fogAmount = smoothstep(u_fogStart, 1.0, depth) * u_fogDensity;
-            
+
             vec3 fogged = mix(color.rgb, u_fogColor, fogAmount * u_intensity);
             gl_FragColor = vec4(fogged, color.a);
         }
@@ -2690,41 +3117,42 @@ const fragmentShaders = {
         uniform vec2 u_resolution;
         uniform float u_separation;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             float depth = getDepth(v_texCoord);
             vec2 texelSize = 1.0 / u_resolution;
-            
+
             // Shift based on depth
             float shift = (depth - 0.5) * u_separation * u_intensity;
-            
+
             vec2 leftUV = v_texCoord - vec2(shift * texelSize.x, 0.0);
             vec2 rightUV = v_texCoord + vec2(shift * texelSize.x, 0.0);
-            
+
             vec3 leftColor = texture2D(u_image, leftUV).rgb;
             vec3 rightColor = texture2D(u_image, rightUV).rgb;
-            
+
             // Red from left, cyan from right
             vec3 anaglyph = vec3(leftColor.r, rightColor.gb);
-            
+
             vec4 original = texture2D(u_image, v_texCoord);
             gl_FragColor = vec4(mix(original.rgb, anaglyph, u_intensity), original.a);
         }
@@ -2739,33 +3167,34 @@ const fragmentShaders = {
         uniform float u_maxDepth;
         uniform float u_feather;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float depth = getDepth(v_texCoord);
-            
+
             // Calculate visibility in depth range
             float inRange = smoothstep(u_minDepth - u_feather, u_minDepth, depth) *
                            (1.0 - smoothstep(u_maxDepth, u_maxDepth + u_feather, depth));
-            
+
             float alpha = mix(1.0, inRange, u_intensity);
             gl_FragColor = vec4(color.rgb, color.a * alpha);
         }
@@ -2780,33 +3209,34 @@ const fragmentShaders = {
         uniform vec3 u_farColor;
         uniform float u_colorMix;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float depth = getDepth(v_texCoord);
-            
+
             // Blend between near and far colors
             vec3 tintColor = mix(u_nearColor, u_farColor, depth);
             vec3 graded = mix(color.rgb, color.rgb * tintColor, u_colorMix * u_intensity);
-            
+
             gl_FragColor = vec4(graded, color.a);
         }
     `,
@@ -2821,47 +3251,48 @@ const fragmentShaders = {
         uniform vec3 u_glowColor;
         uniform float u_glowWidth;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         float detectEdge(vec2 uv) {
             vec2 texelSize = 1.0 / u_resolution;
-            
+
             float center = getDepth(uv);
             float left = getDepth(uv - vec2(texelSize.x, 0.0));
             float right = getDepth(uv + vec2(texelSize.x, 0.0));
             float top = getDepth(uv + vec2(0.0, texelSize.y));
             float bottom = getDepth(uv - vec2(0.0, texelSize.y));
-            
+
             float edge = abs(center - left) + abs(center - right) +
                         abs(center - top) + abs(center - bottom);
-            
+
             return edge;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float edge = detectEdge(v_texCoord);
-            
+
             float glow = smoothstep(u_threshold, u_threshold + 0.1, edge) * u_glowWidth;
             vec3 glowed = color.rgb + u_glowColor * glow * u_intensity;
-            
+
             gl_FragColor = vec4(glowed, color.a);
         }
     `,
@@ -2876,47 +3307,48 @@ const fragmentShaders = {
         uniform float u_focusRange;
         uniform float u_sharpness;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         vec3 sharpen(vec2 uv) {
             vec2 texelSize = 1.0 / u_resolution;
-            
+
             vec3 color = texture2D(u_image, uv).rgb * 5.0;
             color -= texture2D(u_image, uv + vec2(texelSize.x, 0.0)).rgb;
             color -= texture2D(u_image, uv - vec2(texelSize.x, 0.0)).rgb;
             color -= texture2D(u_image, uv + vec2(0.0, texelSize.y)).rgb;
             color -= texture2D(u_image, uv - vec2(0.0, texelSize.y)).rgb;
-            
+
             return color * u_sharpness;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float depth = getDepth(v_texCoord);
-            
+
             float depthDiff = abs(depth - u_focusDepth);
             float inFocus = 1.0 - smoothstep(0.0, u_focusRange, depthDiff);
-            
+
             vec3 sharpened = sharpen(v_texCoord);
             vec3 result = mix(color.rgb, sharpened, inFocus * u_intensity);
-            
+
             gl_FragColor = vec4(result, color.a);
         }
     `,
@@ -2930,35 +3362,36 @@ const fragmentShaders = {
         uniform float u_strength;
         uniform float u_angle;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             float depth = getDepth(v_texCoord);
-            
+
             // Displace based on depth
             float displacement = (depth - 0.5) * u_strength * u_intensity * 0.1;
             vec2 offset = vec2(cos(u_angle), sin(u_angle)) * displacement;
-            
+
             vec2 displaced = v_texCoord + offset;
             vec4 color = texture2D(u_image, displaced);
-            
+
             gl_FragColor = color;
         }
     `,
@@ -2973,52 +3406,53 @@ const fragmentShaders = {
         uniform float u_lightHeight;
         uniform float u_bumpStrength;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         vec3 calculateNormal(vec2 uv) {
             vec2 texelSize = 1.0 / u_resolution;
-            
+
             float center = getDepth(uv);
             float right = getDepth(uv + vec2(texelSize.x, 0.0));
             float top = getDepth(uv + vec2(0.0, texelSize.y));
-            
+
             vec3 dx = vec3(texelSize.x, 0.0, (right - center) * u_bumpStrength);
             vec3 dy = vec3(0.0, texelSize.y, (top - center) * u_bumpStrength);
-            
+
             return normalize(cross(dx, dy));
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             vec3 normal = calculateNormal(v_texCoord);
-            
+
             // Light direction
             vec3 lightDir = normalize(vec3(
                 cos(u_lightAngle),
                 sin(u_lightAngle),
                 u_lightHeight
             ));
-            
+
             float lighting = max(dot(normal, lightDir), 0.0);
             lighting = mix(0.5, lighting, u_intensity);
-            
+
             vec3 lit = color.rgb * lighting;
             gl_FragColor = vec4(lit, color.a);
         }
@@ -3033,45 +3467,46 @@ const fragmentShaders = {
         uniform float u_minDotSize;
         uniform float u_maxDotSize;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float depth = getDepth(v_texCoord);
             float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-            
+
             // Dot size based on depth
             float dotSize = mix(u_minDotSize, u_maxDotSize, depth);
-            
+
             vec2 cellSize = vec2(dotSize);
             vec2 cell = floor(v_texCoord * u_resolution / cellSize);
             vec2 cellPos = fract(v_texCoord * u_resolution / cellSize);
-            
+
             // Distance from cell center
             vec2 center = vec2(0.5);
             float dist = length(cellPos - center);
-            
+
             // Dot radius based on luminance
             float radius = luma * 0.5;
             float dot = smoothstep(radius, radius - 0.1, dist);
-            
+
             vec3 halftone = mix(vec3(1.0), color.rgb, dot);
             gl_FragColor = vec4(mix(color.rgb, halftone, u_intensity), color.a);
         }
@@ -3088,115 +3523,109 @@ const fragmentShaders = {
         uniform vec3 u_shadowColor;
         uniform float u_shadowSoftness;
         uniform float u_useDepthTexture;
+        uniform float u_depthFlipY;
         uniform float u_invertDepth;
-        
+
         varying vec2 v_texCoord;
-        
+
         float getPseudoDepth(vec2 uv) {
             vec3 color = texture2D(u_image, uv).rgb;
             return 1.0 - dot(color, vec3(0.299, 0.587, 0.114));
         }
-        
+
         float getDepth(vec2 uv) {
             float depth;
             if (u_useDepthTexture > 0.5) {
-                depth = texture2D(u_depthTexture, uv).r;
+                depth = texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
             } else {
                 depth = getPseudoDepth(uv);
             }
             return u_invertDepth > 0.5 ? 1.0 - depth : depth;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
             float depth = getDepth(v_texCoord);
-            
+
             // Shadow offset based on depth
             vec2 shadowDir = vec2(cos(u_shadowAngle), sin(u_shadowAngle));
             vec2 shadowOffset = shadowDir * depth * u_shadowDistance * 0.01;
-            
+
             float shadowDepth = getDepth(v_texCoord - shadowOffset);
             float shadow = smoothstep(0.0, u_shadowSoftness, depth - shadowDepth);
-            
+
             vec3 shadowed = mix(color.rgb, u_shadowColor, shadow * u_intensity);
             gl_FragColor = vec4(shadowed, color.a);
         }
     `,
 
     sharp_3d_view: `
-        precision mediump float;
+        precision highp float;
         uniform sampler2D u_image;
         uniform sampler2D u_depthTexture;
         uniform float u_intensity;
         uniform vec2 u_resolution;
-        uniform float u_time;
         uniform float u_rotationX;
         uniform float u_rotationY;
-        uniform float u_zoom;
-        uniform float u_pointSize;
+        uniform float u_parallaxScale;
+        uniform float u_shadowAmount;
         uniform float u_useDepthTexture;
-        
+        uniform float u_depthFlipY;
+
         varying vec2 v_texCoord;
-        
-        // Reconstruct 3D position from depth
-        vec3 getWorldPosition(vec2 uv, float depth) {
-            vec3 pos;
-            pos.xy = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
-            pos.z = -depth * 2.0; // Map depth to negative Z (camera looks down -Z axis)
-            return pos;
+
+        vec2 dFlip(vec2 uv) {
+            return u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv;
         }
-        
-        // Simple rotation matrices
-        mat3 rotateX(float angle) {
-            float c = cos(angle);
-            float s = sin(angle);
-            return mat3(1, 0, 0, 0, c, -s, 0, s, c);
-        }
-        
-        mat3 rotateY(float angle) {
-            float c = cos(angle);
-            float s = sin(angle);
-            return mat3(c, 0, s, 0, 1, 0, -s, 0, c);
-        }
-        
+
         void main() {
-            vec4 color = texture2D(u_image, v_texCoord);
-            
-            if (u_useDepthTexture < 0.5) {
-                // No depth texture - just show original image
-                gl_FragColor = color;
+            if (u_useDepthTexture < 0.5 || u_intensity < 0.01) {
+                gl_FragColor = texture2D(u_image, v_texCoord);
                 return;
             }
-            
-            float depth = texture2D(u_depthTexture, v_texCoord).r;
-            
-            // Get 3D position
-            vec3 worldPos = getWorldPosition(v_texCoord, depth);
-            
-            // Apply rotations
-            worldPos = rotateY(u_rotationY) * (rotateX(u_rotationX) * worldPos);
-            
-            // Move camera back and apply zoom
-            worldPos.z -= 3.0 / u_zoom;
-            
-            // Proper perspective projection
-            float perspectiveFactor = -2.5 / worldPos.z; // Focal length / distance
-            vec2 projectedUV = worldPos.xy * perspectiveFactor;
-            projectedUV = projectedUV * 0.5 + 0.5;
-            
-            // Sample from original image at rotated position
-            if (projectedUV.x >= 0.0 && projectedUV.x <= 1.0 && 
-                projectedUV.y >= 0.0 && projectedUV.y <= 1.0) {
-                vec4 rotatedColor = texture2D(u_image, projectedUV);
-                
-                // Add depth-based shading for 3D effect
-                float shade = 1.0 - depth * 0.3;
-                rotatedColor.rgb *= shade;
-                
-                gl_FragColor = mix(color, rotatedColor, u_intensity);
-            } else {
-                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+            vec3 viewDir = normalize(vec3(u_rotationY, -u_rotationX, -1.0));
+            float parallax = u_parallaxScale;
+
+            const float minLayers = 8.0;
+            const float maxLayers = 32.0;
+            float numLayers = mix(maxLayers, minLayers, abs(dot(vec3(0.0, 0.0, -1.0), viewDir)));
+
+            float layerDepth = 1.0 / numLayers;
+            float currentLayerDepth = 0.0;
+
+            // Correct for aspect ratio to keep rotation isotropic
+            vec2 aspectCorrection = vec2(1.0, u_resolution.x / u_resolution.y);
+            vec2 P = viewDir.xy * parallax * aspectCorrection;
+            vec2 deltaTexCoords = P / numLayers;
+
+            vec2 currentTexCoords = v_texCoord;
+            float currentDepthMapValue = texture2D(u_depthTexture, dFlip(currentTexCoords)).r;
+
+            for (int i = 0; i < 32; i++) {
+                if(currentLayerDepth >= currentDepthMapValue) break;
+                currentTexCoords -= deltaTexCoords;
+                currentDepthMapValue = texture2D(u_depthTexture, dFlip(currentTexCoords)).r;
+                currentLayerDepth += layerDepth;
             }
+
+            vec2 prevTexCoords = currentTexCoords + deltaTexCoords;
+            float afterDepth  = currentDepthMapValue - currentLayerDepth;
+            float beforeDepth = texture2D(u_depthTexture, dFlip(prevTexCoords)).r - currentLayerDepth + layerDepth;
+
+            float denom = afterDepth - beforeDepth;
+            float weight = abs(denom) > 0.0001 ? clamp(afterDepth / denom, 0.0, 1.0) : 0.0;
+            vec2 finalTexCoords = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
+
+            if (finalTexCoords.x < 0.0 || finalTexCoords.x > 1.0 || finalTexCoords.y < 0.0 || finalTexCoords.y > 1.0) {
+                gl_FragColor = vec4(0.0);
+                return;
+            }
+
+            vec4 color = texture2D(u_image, finalTexCoords);
+            float shadow = mix(1.0, 1.0 - currentDepthMapValue * 0.5, u_shadowAmount);
+
+            gl_FragColor = mix(texture2D(u_image, v_texCoord), vec4(color.rgb * shadow, color.a), u_intensity);
         }
     `,
 
@@ -3210,22 +3639,23 @@ const fragmentShaders = {
         uniform float u_lightElevation;
         uniform float u_lightIntensity;
         uniform float u_useNormalTexture;
-        
+        uniform float u_depthFlipY;
+
         varying vec2 v_texCoord;
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             if (u_useNormalTexture < 0.5) {
                 gl_FragColor = color;
                 return;
             }
-            
+
             // Read normal map (RGB stored as [0,255], convert to [-1,1])
-            vec3 normal = texture2D(u_normalTexture, v_texCoord).rgb;
+            vec3 normal = texture2D(u_normalTexture, u_depthFlipY > 0.5 ? vec2(v_texCoord.x, 1.0 - v_texCoord.y) : v_texCoord).rgb;
             normal = normal * 2.0 - 1.0;
             normal = normalize(normal);
-            
+
             // Light direction from angles
             vec3 lightDir = vec3(
                 cos(u_lightElevation) * cos(u_lightAngle),
@@ -3233,13 +3663,13 @@ const fragmentShaders = {
                 sin(u_lightElevation)
             );
             lightDir = normalize(lightDir);
-            
+
             // Diffuse lighting
             float diffuse = max(dot(normal, lightDir), 0.0);
-            
+
             // Apply lighting
             vec3 lit = color.rgb * (0.3 + diffuse * u_lightIntensity);
-            
+
             gl_FragColor = vec4(mix(color.rgb, lit, u_intensity), color.a);
         }
     `,
@@ -3256,83 +3686,84 @@ const fragmentShaders = {
         uniform float u_depthDarken;
         uniform float u_useDepthTexture;
         uniform float u_useNormalTexture;
-        
+        uniform float u_depthFlipY;
+
         varying vec2 v_texCoord;
-        
+
         float getDepth(vec2 uv) {
-            return texture2D(u_depthTexture, uv).r;
+            return texture2D(u_depthTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).r;
         }
-        
+
         vec3 getNormal(vec2 uv) {
-            vec3 n = texture2D(u_normalTexture, uv).rgb;
+            vec3 n = texture2D(u_normalTexture, u_depthFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv).rgb;
             return normalize(n * 2.0 - 1.0);
         }
-        
+
         float computeAO(vec2 uv, float depth, vec3 normal) {
             float ao = 0.0;
             float pixelSize = 1.0 / max(u_resolution.x, u_resolution.y);
-            
+
             // Sample nearby depths
             float radius = 5.0 * pixelSize;
             float samples = 8.0;
-            
+
             for (float i = 0.0; i < 8.0; i += 1.0) {
                 float angle = i * 3.14159265 * 2.0 / samples;
                 vec2 offset = vec2(cos(angle), sin(angle)) * radius;
-                
+
                 float sampleDepth = getDepth(uv + offset);
                 float depthDiff = depth - sampleDepth;
-                
+
                 if (depthDiff > 0.0) {
                     ao += depthDiff;
                 }
             }
-            
+
             return clamp(1.0 - ao * u_occlusionStrength, 0.0, 1.0);
         }
-        
+
         float detectEdge(vec2 uv) {
             float pixelSize = 1.0 / max(u_resolution.x, u_resolution.y);
             float center = getDepth(uv);
-            
+
             float edge = 0.0;
             edge += abs(center - getDepth(uv + vec2(pixelSize, 0.0)));
             edge += abs(center - getDepth(uv + vec2(-pixelSize, 0.0)));
             edge += abs(center - getDepth(uv + vec2(0.0, pixelSize)));
             edge += abs(center - getDepth(uv + vec2(0.0, -pixelSize)));
-            
+
             return edge * 2.0;
         }
-        
+
         void main() {
             vec4 color = texture2D(u_image, v_texCoord);
-            
+
             if (u_useDepthTexture < 0.5) {
                 gl_FragColor = color;
                 return;
             }
-            
+
             float depth = getDepth(v_texCoord);
             vec3 normal = u_useNormalTexture > 0.5 ? getNormal(v_texCoord) : vec3(0, 0, 1);
-            
+
             // Compute geometric ambient occlusion
             float ao = computeAO(v_texCoord, depth, normal);
-            
+
             // Detect depth edges
             float edge = detectEdge(v_texCoord);
-            
+
             // Apply effects
             vec3 result = color.rgb;
-            
+
             // Ambient occlusion darkening
             result *= mix(1.0, ao, u_occlusionStrength);
-            
+
             // Edge enhancement
             result = mix(result, result * (1.0 + edge), u_edgeEnhance);
-            
+
             // Depth-based darkening (atmospheric perspective)
             result *= mix(1.0, 1.0 - depth * 0.5, u_depthDarken);
-            
+
             gl_FragColor = vec4(mix(color.rgb, result, u_intensity), color.a);
         }
     `,
